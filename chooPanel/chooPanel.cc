@@ -32,6 +32,7 @@ extern "C"
 
 #define mqtt_host "192.168.31.79"
 #define mqtt_port 1883
+#define RECONNECT_TIMEOUT 10000
 
 int sflags = 0;
 #define json_object_to_json_string(obj) json_object_to_json_string_ext(obj,sflags)
@@ -42,6 +43,7 @@ using rgb_matrix::Color;
 using rgb_matrix::FrameCanvas;
 using rgb_matrix::RGBMatrix;
 
+void DisplayAnimation(RGBMatrix *matrix, FrameCanvas *offscreen_canvas, int vsync_multiple);
 
 
 // ################################################################################
@@ -68,15 +70,20 @@ FrameCanvas *offscreen_canvas;
 struct mqttCfg glbMqttCfg;
 volatile bool Interrupt = false;
 
+tmillis_t glbLastConnection = 0;
+bool glbIsOnline = false;
+
 // ################################################################################
 
-void spinning(){
+static void spinning(){
 	char spin[5] = "\\|/-";
 	static int spin_idx = 0;
 	printf("\r%c", spin[spin_idx++]);
 	fflush(stdout);
 	spin_idx = spin_idx % 4;
 }
+
+
 
 static tmillis_t GetTimeInMillis()
 {
@@ -93,6 +100,28 @@ static void SleepMillis(tmillis_t milli_seconds)
 	ts.tv_sec = milli_seconds / 1000;
 	ts.tv_nsec = (milli_seconds % 1000) * 1000000;
 	nanosleep(&ts, NULL);
+}
+
+
+
+static void setOffline(){
+	glbIsOnline = false;
+}
+
+static bool isOnline(){
+	return glbIsOnline;
+}
+static bool isTimeoutForConnect(){
+	return (GetTimeInMillis() - glbLastConnection >= RECONNECT_TIMEOUT);
+}
+
+static void setTimeoutConnected(){
+	glbIsOnline = true;
+	glbLastConnection = GetTimeInMillis();
+}
+
+static void setTimeoutConnecting(){
+	glbLastConnection = GetTimeInMillis();
 }
 
 
@@ -622,6 +651,8 @@ void connect_callback(struct mosquitto *mosq, void *obj, int result)
 {
 	printf("Connect_callback(), rc=%d --------------->\n", result);
 
+	setTimeoutConnected();	//set online and reset timeout
+
 	printf("mosquitto_subscribing...\n");
 	mosquitto_subscribe(mosq, NULL, "/chooPanel/#", 0);
 	printf("mosquitto_subscribe issued...\n");
@@ -801,6 +832,8 @@ int initMQTT(void)
 		mosquitto_message_callback_set(mosq, message_callback);
 
 		printf("mosquitto_connecting...\n");
+	
+		setTimeoutConnecting();	//set reset timeout
 		rc = mosquitto_connect(mosq, glbMqttCfg.host, glbMqttCfg.port, 60);
 		//printf("mosquitto_connect issued...cost %dms\n", (int)(GetTimeInMillis()-old));
 	}
@@ -812,7 +845,7 @@ int initMQTT(void)
 int runMQTT(void)
 {
 	int rc = 0;
-	tmillis_t old = GetTimeInMillis();
+	//tmillis_t old = GetTimeInMillis();
 
 	// MQTT client.
 	if(mosq)
@@ -822,6 +855,8 @@ int runMQTT(void)
 		//printf("mosquitto_loop() cost %dms\n", (int)(GetTimeInMillis()-old));
 		if(!Interrupt && rc)
 		{
+
+			/*
 			switch (rc){
 				case MOSQ_ERR_SUCCESS:
 					printf("mosquitto_loop ret: MOSQ_ERR_SUCCESS\n");
@@ -832,30 +867,34 @@ int runMQTT(void)
 				case MOSQ_ERR_NOMEM:
 					printf("mosquitto_loop ret: MOSQ_ERR_NOMEM\n");
 					break;
-				case MOSQ_ERR_NO_CONN:
-					printf("mosquitto_loop ret: MOSQ_ERR_NO_CONN\n");
-					break;
-				case MOSQ_ERR_CONN_LOST:
-					printf("mosquitto_loop ret: MOSQ_ERR_CONN_LOST\n");
-					break;
 				case MOSQ_ERR_PROTOCOL:
 					printf("mosquitto_loop ret: MOSQ_ERR_PROTOCOL\n");
 					break;
 				case MOSQ_ERR_ERRNO:
 					printf("mosquitto_loop ret: MOSQ_ERR_ERRNO\n");
 					break;
+				case MOSQ_ERR_NO_CONN:
+					printf("mosquitto_loop ret: MOSQ_ERR_NO_CONN\n");
+					break;
+				case MOSQ_ERR_CONN_LOST:
+					printf("mosquitto_loop ret: MOSQ_ERR_CONN_LOST\n");
+					break;
+
 				default :
 					printf("mosquitto_loop ret: %d\n", rc);
-					
 			}
+			*/
 
+			if(MOSQ_ERR_NO_CONN == rc || MOSQ_ERR_CONN_LOST == rc)
+				setOffline();
 
-			sleep(10);
-
-			printf("reconnecting...\n");
-			old = GetTimeInMillis();
-			int rt = mosquitto_reconnect_async(mosq);
-			printf("reconnection issued...ret:%d cost %dms\n", rt, (int)(GetTimeInMillis()-old));
+			//不在线 并且 等候时间足够
+			if( !isOnline() && isTimeoutForConnect()){
+				printf("reconnecting...\n");
+				setTimeoutConnecting();	//set reset timeout
+				int rt = mosquitto_reconnect_async(mosq);
+				printf("reconnection issued...ret:%d\n", rt);
+			}
 		}
 	}
 
@@ -867,6 +906,8 @@ int runMQTT(void)
 
 int main(int argc, char *argv[])
 {
+	int vsync_multiple = 1;
+
 	signal(SIGTERM, InterruptHandler);
 	signal(SIGINT, InterruptHandler);
 
@@ -893,13 +934,17 @@ int main(int argc, char *argv[])
 	}
 
 	initPanel(argc, argv);
+
 	initMQTT();
+	
 
 	while(!Interrupt)
 	{
-		//DisplayAnimation(canvas, offscreen_canvas, vsync_multiple);
-		runMQTT();
-		SleepMillis(500);
+		for(int i = 0; i < 100; i++){
+			DisplayAnimation(canvas, offscreen_canvas, vsync_multiple); //1000 frames per second
+			SleepMillis(1);	//
+		}
+		runMQTT();	//10 times per second.
 		spinning();
 	}
 
@@ -919,3 +964,9 @@ int main(int argc, char *argv[])
 
 }
 
+
+
+void DisplayAnimation(RGBMatrix *matrix, FrameCanvas *offscreen_canvas, int vsync_multiple)
+{
+
+}
