@@ -1,3 +1,8 @@
+## 20240221.MQTTpanel 测试总结
+---
+20240221 commit note：
+我所fork的原repo上的代码是有很多错误的，修正之后才能使用。Mosquitto的client客户端代码，有很多细节上的不足，比如，断连之后无法重连。这里做了修改。
+
 
 ![MickMake](https://www.mickmake.com/banner.png)
 

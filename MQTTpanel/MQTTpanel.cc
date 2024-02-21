@@ -29,17 +29,17 @@ extern "C"
 
 #include "led-matrix.h"
 #include "graphics.h"
-#include "transformer.h"
+//#include "transformer.h"
 #include "content-streamer.h"
 #include "json.h"
 #include "json_util.h"
 #include "mosquitto.h"
 #include "led-matrix.h"
 
-#define mqtt_host "localhost"
+#define mqtt_host "192.168.31.79"
 #define mqtt_port 1883
 
-using rgb_matrix::GPIO;
+//using rgb_matrix::GPIO;
 using rgb_matrix::Canvas;
 using rgb_matrix::Color;
 using rgb_matrix::FrameCanvas;
@@ -134,59 +134,6 @@ void setPanelConfig(char *Key, int Value, bool JSONpref);
 void setPanelConfig(char *Key, bool Value, bool JSONpref);
 bool fetchFont(_Text *Text);
 bool convRGBstr(char *str, uint8_t *red, uint8_t *green, uint8_t *blue);
-
-
-// ################################################################################
-int main(int argc, char *argv[])
-{
-	signal(SIGTERM, InterruptHandler);
-	signal(SIGINT, InterruptHandler);
-
-	const char *filename = "/usr/local/etc/config.json";
-	int fileJSON = open(filename, O_RDONLY, 0);
-	if (fileJSON < 0)
-	{
-		fprintf(stderr, "FAIL: unable to open %s: %s\n", filename, strerror(errno));
-		exit(0);
-	}
-	close(fileJSON);
-
-	printf("Reading JSON config file '%s'...", filename);
-	ConfigJSON = json_object_from_file(filename);
-	if (ConfigJSON != NULL)
-	{
-		printf("Done\n");
-		//printf("OK: json_object_from_fd(%s)=%s\n", filename, json_object_to_json_string(ConfigJSON));
-	}
-	else
-	{
-		fprintf(stderr, "FAIL: unable to parse contents of %s: %s\n", filename, json_object_to_json_string(ConfigJSON));
-		exit(1);
-	}
-
-	initPanel(argc, argv);
-	initMQTT();
-
-	while(!Interrupt)
-	{
-		DisplayAnimation(canvas, offscreen_canvas, vsync_multiple);
-		runMQTT();
-	}
-
-	mosquitto_lib_cleanup();
-
-	// Animation finished. Shut down the RGB canvas.
-	canvas->Clear();
-	delete canvas;
-
-	if (Interrupt)
-	{
-		fprintf(stderr, "Caught signal. Exiting.\n");
-	}
-	printf("\nEnded.\n\n");
-
-	return 0;
-}
 
 
 
@@ -428,7 +375,7 @@ int initPanel(int argc, char *argv[])
 	setPanelConfig((char *) "row_address_type");
 	setPanelConfig((char *) "show_refresh_rate");
 	setPanelConfig((char *) "inverse_colors");
-	// printf("JSON:%s\n", json_object_to_json_string(rootObject));
+	//printf("JSON:%s\n", json_object_to_json_string(rootObject));
 
 	struct json_object *rootObject;
 	if (json_object_object_get_ex(ConfigJSON, "background", &rootObject))
@@ -517,7 +464,7 @@ int initPanel(int argc, char *argv[])
 			keyObject = json_object_new_string(getenv("TZ"));
 			json_object_object_add(rootObject, "timezone", keyObject);
 		}
-		displayTime.timezone = json_object_get_boolean(keyObject);
+		displayTime.timezone = json_object_get_string(keyObject);
 	}
 	// printf("JSON(time):%s\n", json_object_get_string(rootObject));
 
@@ -580,7 +527,7 @@ int initPanel(int argc, char *argv[])
 			keyObject = json_object_new_string(getenv("TZ"));
 			json_object_object_add(rootObject, "timezone", keyObject);
 		}
-		displayDate.timezone = json_object_get_boolean(keyObject);
+		displayDate.timezone = json_object_get_string(keyObject);
 	}
 	// printf("JSON(date):%s\n", json_object_get_string(rootObject));
 
@@ -665,7 +612,8 @@ int initPanel(int argc, char *argv[])
 
 	if (angle >= -360)
 	{
-		canvas->ApplyStaticTransformer(rgb_matrix::RotateTransformer(angle));
+//		canvas->ApplyStaticTransformer(rgb_matrix::RotateTransformer(angle));
+		printf("-------------------DEBUG HERE 2-------------------\n");
 	}
 
 	offscreen_canvas = canvas->CreateFrameCanvas();
@@ -859,6 +807,8 @@ void DisplayAnimation(RGBMatrix *matrix, FrameCanvas *offscreen_canvas, int vsyn
 	time_t rawtime;
 	struct tm *now;
 	char theTime[80];
+	char spin[5] = "\\|/-";
+	int spin_idx = 0;
 
 	const tmillis_t duration_ms = (bgImage.is_multi_frame ? bgImage.anim_duration_ms : bgImage.wait_ms);
 	rgb_matrix::StreamReader reader(content_stream);
@@ -877,7 +827,7 @@ void DisplayAnimation(RGBMatrix *matrix, FrameCanvas *offscreen_canvas, int vsyn
 			// Display the time.
 			if (displayTime.show)
 			{
-				setenv("TZ", displayTime.zone, 1);
+				setenv("TZ", displayTime.timezone, 1);
 				tzset();
 				time(&rawtime);
 				now = localtime(&rawtime);
@@ -891,7 +841,7 @@ void DisplayAnimation(RGBMatrix *matrix, FrameCanvas *offscreen_canvas, int vsyn
 			// Display the date.
 			if (displayDate.show)
 			{
-				setenv("TZ", displayDate.zone, 1);
+				setenv("TZ", displayDate.timezone, 1);
 				tzset();
 				time(&rawtime);
 				now = localtime(&rawtime);
@@ -913,6 +863,10 @@ void DisplayAnimation(RGBMatrix *matrix, FrameCanvas *offscreen_canvas, int vsyn
 			offscreen_canvas = matrix->SwapOnVSync(offscreen_canvas, vsync_multiple);
 			const tmillis_t time_already_spent = GetTimeInMillis() - start_wait_ms;
 			SleepMillis(anim_delay_ms - time_already_spent);
+
+
+			printf("%c", spin[spin_idx++]);
+			spin_idx = spin_idx % 4;
 		}
 		reader.Rewind();
 	}
@@ -925,6 +879,7 @@ int initMQTT(void)
 	// uint8_t reconnect = true;
 	char clientid[24];
 	int rc = 0;
+	const tmillis_t old = GetTimeInMillis();
 
 	mosquitto_lib_init();
 
@@ -936,9 +891,10 @@ int initMQTT(void)
 		mosquitto_connect_callback_set(mosq, connect_callback);
 		mosquitto_message_callback_set(mosq, message_callback);
 
+		printf("mosquitto_connecting...\n");
 		rc = mosquitto_connect(mosq, mqtt_host, mqtt_port, 60);
+		printf("mosquitto_connect issued...cost %dms\n", (int)(GetTimeInMillis()-old));
 
-		mosquitto_subscribe(mosq, NULL, "/display/#", 0);
 	}
 
 	return(rc);
@@ -948,17 +904,50 @@ int initMQTT(void)
 int runMQTT(void)
 {
 	int rc = 0;
+	tmillis_t old = GetTimeInMillis();
 
 	// MQTT client.
 	if(mosq)
 	{
 		//rc = mosquitto_loop(mosq, -1, 1);
 		rc = mosquitto_loop(mosq, 0, 1);
-		if(Interrupt && rc)
+		printf("mosquitto_loop() cost %dms\n", (int)(GetTimeInMillis()-old));
+		if(!Interrupt && rc)
 		{
-			printf("connection error!\n");
+			switch (rc){
+				case MOSQ_ERR_SUCCESS:
+					printf("mosquitto_loop ret: MOSQ_ERR_SUCCESS\n");
+					break;
+				case MOSQ_ERR_INVAL:
+					printf("mosquitto_loop ret: MOSQ_ERR_INVAL\n");
+					break;
+				case MOSQ_ERR_NOMEM:
+					printf("mosquitto_loop ret: MOSQ_ERR_NOMEM\n");
+					break;
+				case MOSQ_ERR_NO_CONN:
+					printf("mosquitto_loop ret: MOSQ_ERR_NO_CONN\n");
+					break;
+				case MOSQ_ERR_CONN_LOST:
+					printf("mosquitto_loop ret: MOSQ_ERR_CONN_LOST\n");
+					break;
+				case MOSQ_ERR_PROTOCOL:
+					printf("mosquitto_loop ret: MOSQ_ERR_PROTOCOL\n");
+					break;
+				case MOSQ_ERR_ERRNO:
+					printf("mosquitto_loop ret: MOSQ_ERR_ERRNO\n");
+					break;
+				default :
+					printf("mosquitto_loop ret: %d\n", rc);
+					
+			}
+
+
 			sleep(10);
-			mosquitto_reconnect(mosq);
+
+			printf("reconnecting...\n");
+			old = GetTimeInMillis();
+			int rt = mosquitto_reconnect_async(mosq);
+			printf("reconnection issued...ret:%d cost %dms\n", rt, (int)(GetTimeInMillis()-old));
 		}
 	}
 
@@ -968,7 +957,12 @@ int runMQTT(void)
 
 void connect_callback(struct mosquitto *mosq, void *obj, int result)
 {
-	printf("connect callback, rc=%d\n", result);
+	printf("Connect_callback(), rc=%d --------------->\n", result);
+
+	printf("mosquitto_subscribing...\n");
+	mosquitto_subscribe(mosq, NULL, "/display/#", 0);
+	printf("mosquitto_subscribe issued...\n");
+
 }
 
 
@@ -979,6 +973,7 @@ void message_callback(struct mosquitto *mosq, void *obj, const struct mosquitto_
 	// int payloadInt = std::stoi((char *)message->payload, nullptr, 0);
 	if (message->payloadlen > 0)
 		payloadInt = strtol((char *)message->payload, nullptr, 0);
+
 	printf("got message '%.*s' for topic '%s'\n", message->payloadlen, (char*) message->payload, message->topic);
 
 
@@ -1035,7 +1030,7 @@ void message_callback(struct mosquitto *mosq, void *obj, const struct mosquitto_
 		convRGBstr((char *)message->payload, &displayTime.red, &displayTime.green, &displayTime.blue);
 
 	mosquitto_topic_matches_sub("/display/time/zone", message->topic, &match);
-	if (match)strcpy
+	if (match)
 		strcpy((char *)displayTime.timezone, (char *)message->payload);
 
 
@@ -1072,7 +1067,7 @@ void message_callback(struct mosquitto *mosq, void *obj, const struct mosquitto_
 		convRGBstr((char *)message->payload, &displayDate.red, &displayDate.green, &displayDate.blue);
 
 	mosquitto_topic_matches_sub("/display/date/zone", message->topic, &match);
-	if (match)strcpy
+	if (match)
 		strcpy((char *)displayDate.timezone, (char *)message->payload);
 
 
@@ -1166,5 +1161,64 @@ static int usage(const char *progname)
 		"So you can choose different durations for different images.\n");
 
 	return(1);
+}
+
+
+// ################################################################################
+int main(int argc, char *argv[])
+{
+	//char spin[5] = "\\|/-";
+	//char spin_idx = 0;
+
+	signal(SIGTERM, InterruptHandler);
+	signal(SIGINT, InterruptHandler);
+
+	const char *filename = "config.json";
+	int fileJSON = open(filename, O_RDONLY, 0);
+	if (fileJSON < 0)
+	{
+		fprintf(stderr, "FAIL: unable to open %s: %s\n", filename, strerror(errno));
+		exit(0);
+	}
+	close(fileJSON);
+
+	printf("Reading JSON config file '%s'...", filename);
+	ConfigJSON = json_object_from_file(filename);
+	if (ConfigJSON != NULL)
+	{
+		printf("Done\n");
+		printf("OK: json_object_from_fd(%s)=%s\n", filename, json_object_to_json_string(ConfigJSON));
+	}
+	else
+	{
+		fprintf(stderr, "FAIL: unable to parse contents of %s: %s\n", filename, json_object_to_json_string(ConfigJSON));
+		exit(1);
+	}
+
+	initPanel(argc, argv);
+	initMQTT();
+
+	while(!Interrupt)
+	{
+		DisplayAnimation(canvas, offscreen_canvas, vsync_multiple);
+		runMQTT();
+
+		//printf("\r%c", spin[spin_idx++]);
+		//spin_idx = spin_idx % 4;
+	}
+
+	mosquitto_lib_cleanup();
+
+	// Animation finished. Shut down the RGB canvas.
+	canvas->Clear();
+	delete canvas;
+
+	if (Interrupt)
+	{
+		fprintf(stderr, "Caught signal. Exiting.\n");
+	}
+	printf("\nEnded.\n\n");
+
+	return 0;
 }
 

@@ -10,10 +10,11 @@ OPTIONAL_BINARIES=video-viewer
 JSON_INCDIR=/usr/include/json-c
 JSON_LIBDIR=/usr/lib
 JSON_LIBRARY_NAME=json-c
-RGB_INCDIR=/usr/local/include/rgbmatrix
-RGB_LIBDIR=/usr/local/lib
+RGB_INCDIR=/home/dy/rpi-rgb-led-matrix/include
+RGB_LIBDIR=/home/dy/rpi-rgb-led-matrix/lib
 RGB_LIBRARY_NAME=rgbmatrix
 RGB_LIBRARY=$(RGB_LIBDIR)/lib$(RGB_LIBRARY_NAME).a
+
 LDFLAGS+=-L$(RGB_LIBDIR) -l$(RGB_LIBRARY_NAME) -L$(JSON_LIBDIR) -l$(JSON_LIBRARY_NAME) -lrt -lm -lpthread -lmosquitto
 
 # Imagemagic flags, only needed if actually compiled.

@@ -1,11 +1,11 @@
 {
 	"panel":
 	{
-		"hardware_mapping":"adafruit-hat-pwm",
+		"hardware_mapping":"regular",
 		"led_rgb_sequence":"RGB",
-		"rows":64,
+		"rows":32,
 		"cols":64,
-		"chain_length":1,
+		"chain_length":8,
 		"parallel":1,
 		"brightness":100,
 		"scan_mode":1,
@@ -13,40 +13,40 @@
 	},
 	"background":
 	{
-		"dir":"/usr/local/share/rgbmatrix/images",
+		"dir":"images",
 		"image":"Alien.gif",
-		"show":1
+		"show":0
 	},
 	"time":
 	{
 		"timezone":"Australia/Sydney",
 		"format":"%H:%M",
-		"dir":"/usr/local/share/rgbmatrix/fonts",
-		"font":"DroidSans-14pt.bdf",
+		"dir":"fonts",
+		"font":"msyh12.bdf",
 		"color":"FF00FF",
-		"x":10,
-		"y":40,
+		"x":120,
+		"y":10,
 		"show":1
 	},
 	"date":
 	{
 		"timezone":"Australia/Sydney",
 		"format":"%Y/%m/%d",
-		"dir":"/usr/local/share/rgbmatrix/fonts",
-		"font":"DroidSans-8pt.bdf",
+		"dir":"fonts",
+		"font":"msyh12.bdf",
 		"color":"800020",
 		"x":5,
-		"y":0,
+		"y":10,
 		"show":1
 	},
 	"text":
 	{
 		"format":"",
-		"dir":"/usr/local/share/rgbmatrix/fonts",
-		"font":"DroidSans-8pt.bdf",
+		"dir":"fonts",
+		"font":"msyh12.bdf",
 		"color":"888888",
-		"x":5,
-		"y":30,
+		"x":240,
+		"y":10,
 		"show":0
 	}
 }
