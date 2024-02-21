@@ -807,8 +807,6 @@ void DisplayAnimation(RGBMatrix *matrix, FrameCanvas *offscreen_canvas, int vsyn
 	time_t rawtime;
 	struct tm *now;
 	char theTime[80];
-	char spin[5] = "\\|/-";
-	int spin_idx = 0;
 
 	const tmillis_t duration_ms = (bgImage.is_multi_frame ? bgImage.anim_duration_ms : bgImage.wait_ms);
 	rgb_matrix::StreamReader reader(content_stream);
@@ -864,9 +862,6 @@ void DisplayAnimation(RGBMatrix *matrix, FrameCanvas *offscreen_canvas, int vsyn
 			const tmillis_t time_already_spent = GetTimeInMillis() - start_wait_ms;
 			SleepMillis(anim_delay_ms - time_already_spent);
 
-
-			printf("%c", spin[spin_idx++]);
-			spin_idx = spin_idx % 4;
 		}
 		reader.Rewind();
 	}
@@ -911,7 +906,7 @@ int runMQTT(void)
 	{
 		//rc = mosquitto_loop(mosq, -1, 1);
 		rc = mosquitto_loop(mosq, 0, 1);
-		printf("mosquitto_loop() cost %dms\n", (int)(GetTimeInMillis()-old));
+		//printf("mosquitto_loop() cost %dms\n", (int)(GetTimeInMillis()-old));
 		if(!Interrupt && rc)
 		{
 			switch (rc){
@@ -1167,9 +1162,6 @@ static int usage(const char *progname)
 // ################################################################################
 int main(int argc, char *argv[])
 {
-	//char spin[5] = "\\|/-";
-	//char spin_idx = 0;
-
 	signal(SIGTERM, InterruptHandler);
 	signal(SIGINT, InterruptHandler);
 
@@ -1202,9 +1194,7 @@ int main(int argc, char *argv[])
 	{
 		DisplayAnimation(canvas, offscreen_canvas, vsync_multiple);
 		runMQTT();
-
-		//printf("\r%c", spin[spin_idx++]);
-		//spin_idx = spin_idx % 4;
+		spinning();
 	}
 
 	mosquitto_lib_cleanup();

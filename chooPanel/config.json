@@ -1,0 +1,18 @@
+{
+	"panel":{
+		"hardware_mapping":"regular",
+		"led_rgb_sequence":"RGB",
+		"rows":32,
+		"cols":64,
+		"chain_length":8,
+		"parallel":1,
+		"brightness":100,
+		"scan_mode":1,
+		"show_refresh_rate":0
+	},
+	"mqtt":{
+		"clientid": "chooPanel",
+		"host": "192.168.31.79",
+		"port": "1883"
+	}
+}
