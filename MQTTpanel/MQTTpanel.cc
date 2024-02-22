@@ -858,6 +858,7 @@ void DisplayAnimation(RGBMatrix *matrix, FrameCanvas *offscreen_canvas, int vsyn
 					rgb_matrix::DrawText(offscreen_canvas, displayText.ptrFont, displayText.x, displayText.y + displayText.ptrFont.baseline(), color, NULL, displayText.format, 0);
 			}
 
+			//https://github.com/hzeller/rpi-rgb-led-matrix/blob/a3eea997a9254b83ab2de97ae80d83588f696387/include/led-matrix.h#L235C57-L235C76
 			offscreen_canvas = matrix->SwapOnVSync(offscreen_canvas, vsync_multiple);
 			const tmillis_t time_already_spent = GetTimeInMillis() - start_wait_ms;
 			SleepMillis(anim_delay_ms - time_already_spent);

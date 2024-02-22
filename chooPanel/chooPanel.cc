@@ -30,6 +30,8 @@ extern "C"
 #include "json_util.h"
 #include "mosquitto.h"
 
+#include "queue.h"
+
 #define mqtt_host "192.168.31.79"
 #define mqtt_port 1883
 #define RECONNECT_TIMEOUT 10000
@@ -43,19 +45,37 @@ using rgb_matrix::Color;
 using rgb_matrix::FrameCanvas;
 using rgb_matrix::RGBMatrix;
 
+
+
+
+
 void DisplayAnimation(RGBMatrix *matrix, FrameCanvas *offscreen_canvas, int vsync_multiple);
 
 
 // ################################################################################
 
-struct mqttCfg
+typedef struct
 {
-	const char *clientid;
-	const char *host;
+	char root[64];
+	char clientid[64];
+	char host[64];
 	uint16_t port;
-} ;
+} mqttCfg_t;
 
 typedef int64_t tmillis_t;
+
+
+
+
+typedef struct {
+	char txt[512];
+}msg_t;
+
+QUEUE_DECLARATION(chooQ, msg_t, 100);	//msg_t x 100 
+QUEUE_DEFINITION(chooQ, msg_t);
+struct chooQ chooQueue;
+
+
 
 // ################################################################################
 
@@ -67,7 +87,7 @@ RGBMatrix::Options panelOptions;
 RGBMatrix *canvas;
 FrameCanvas *offscreen_canvas;
 
-struct mqttCfg glbMqttCfg;
+mqttCfg_t glbMqttCfg;
 volatile bool Interrupt = false;
 
 tmillis_t glbLastConnection = 0;
@@ -124,14 +144,11 @@ static void setTimeoutConnecting(){
 	glbLastConnection = GetTimeInMillis();
 }
 
-
-static void InterruptHandler(int signo)
-{
+static void InterruptHandler(int signo){
 	Interrupt = true;
 }
 
-static int usage(const char *progname)
-{
+static int usage(const char *progname){
 	fprintf(stderr, "usage: %s [options] <image> [option] [<image> ...]\n", progname);
 
 	fprintf(stderr, "Options:\n"
@@ -181,8 +198,7 @@ static int usage(const char *progname)
 
 // 在 ConfigJSON.panel对象中检查Key，不存在则用 panelOptions[key] 值创建；
 // 如果 JSONpref == true，那么 panelOptions[key] 设置为json中的值；
-void setPanelConfig(char *Key, bool Value, bool JSONpref)
-{
+void setPanelConfig(char *Key, bool Value, bool JSONpref){
 	struct json_object *rootObject;
 	if (!json_object_object_get_ex(ConfigJSON, "panel", &rootObject))
 		return;
@@ -218,8 +234,7 @@ void setPanelConfig(char *Key, bool Value, bool JSONpref)
 }
 
 
-void setPanelConfig(char *Key, char *Value, bool JSONpref)
-{
+void setPanelConfig(char *Key, char *Value, bool JSONpref){
 	struct json_object *rootObject;
 	if (!json_object_object_get_ex(ConfigJSON, "panel", &rootObject))
 		return;
@@ -249,8 +264,7 @@ void setPanelConfig(char *Key, char *Value, bool JSONpref)
 }
 
 
-void setPanelConfig(char *Key, int Value, bool JSONpref)
-{
+void setPanelConfig(char *Key, int Value, bool JSONpref){
 	struct json_object *rootObject;
 	if (!json_object_object_get_ex(ConfigJSON, "panel", &rootObject))
 		return;
@@ -307,8 +321,7 @@ void setPanelConfig(char *Key, int Value, bool JSONpref)
 
 // ConfigJSON.panel[key] => panelOptions[key] 
 // JSON => struct
-void setPanelConfig(char *Key)
-{	
+void setPanelConfig(char *Key){	
 	if (strcmp(Key, "show_refresh_rate") == 0)
 		setPanelConfig(Key, true, true);
 
@@ -355,8 +368,7 @@ void setPanelConfig(char *Key)
 
 
 // ################################################################################
-int initPanel(int argc, char *argv[])
-{
+int initPanel(int argc, char *argv[]){
 
 	// ConfigJSON.panel[key] => panelOptions[key] 
 	setPanelConfig((char *) "hardware_mapping");
@@ -386,14 +398,14 @@ int initPanel(int argc, char *argv[])
 			keyObject = json_object_new_string("defaultID:chooPanel");
 			json_object_object_add(rootObject, "clientid", keyObject);
 		}
-		glbMqttCfg.clientid = json_object_get_string(keyObject);
+		strcpy(glbMqttCfg.clientid, json_object_get_string(keyObject));
 
 		if (!json_object_object_get_ex(rootObject, "host", &keyObject))
 		{
 			keyObject = json_object_new_string("mqtt.eclipseprojects.io");	//paho.mqtt.c demo broker
 			json_object_object_add(rootObject, "host", keyObject);
 		}
-		glbMqttCfg.host = json_object_get_string(keyObject);
+		strcpy(glbMqttCfg.host, json_object_get_string(keyObject));
 
 		if (!json_object_object_get_ex(rootObject, "port", &keyObject))
 		{
@@ -401,6 +413,13 @@ int initPanel(int argc, char *argv[])
 			json_object_object_add(rootObject, "port", keyObject);
 		}
 		glbMqttCfg.port = json_object_get_int(keyObject);
+
+		if (!json_object_object_get_ex(rootObject, "root", &keyObject))
+		{
+			keyObject = json_object_new_string("/chooPanel");
+			json_object_object_add(rootObject, "root", keyObject);
+		}
+		strcpy(glbMqttCfg.root, json_object_get_string(keyObject));
 
 	}
 	// printf("JSON(date):%s\n", json_object_get_string(rootObject));
@@ -647,173 +666,49 @@ int initPanel(int argc, char *argv[])
 
 
 
-void connect_callback(struct mosquitto *mosq, void *obj, int result)
-{
+void connect_callback(struct mosquitto *mosq, void *obj, int result){
 	printf("Connect_callback(), rc=%d --------------->\n", result);
 
 	setTimeoutConnected();	//set online and reset timeout
 
-	printf("mosquitto_subscribing...\n");
-	mosquitto_subscribe(mosq, NULL, "/chooPanel/#", 0);
-	printf("mosquitto_subscribe issued...\n");
+
+	char channel[128];
+	sprintf(channel, "%s/#", glbMqttCfg.root);
+	//printf("mosquitto_subscribing...\n");
+	mosquitto_subscribe(mosq, NULL, channel, 0);
+	printf("mosquitto_subscribe[\"%s\"] done.\n", channel);
 
 }
 
 
-void message_callback(struct mosquitto *mosq, void *obj, const struct mosquitto_message *message)
-{
-	//bool match = false;
-	int payloadInt = 0x00;
+void message_callback(struct mosquitto *mosq, void *obj, const struct mosquitto_message *message){
+	bool match = false;
+	//int payloadInt = 0x00;
 	// int payloadInt = std::stoi((char *)message->payload, nullptr, 0);
-	if (message->payloadlen > 0)
-		payloadInt = strtol((char *)message->payload, nullptr, 0);
+	//if (message->payloadlen > 0)
+	//	payloadInt = strtol((char *)message->payload, nullptr, 0);
 
-	printf("got message '%.*s' for topic '%s'\n", message->payloadlen, (char*) message->payload, message->topic);
+	//printf("got message '%.*s' for topic '%s'\n", message->payloadlen, (char*) message->payload, message->topic);
 
-	/*
-	// Background image topics.
-	mosquitto_topic_matches_sub("/display/panel/#", message->topic, &match);
+	char channel[128];
+	sprintf(channel, "%s/msg", glbMqttCfg.root);
+	mosquitto_topic_matches_sub(channel, message->topic, &match);
 	if (match)
 	{
-		mosquitto_topic_matches_sub("/display/panel/brightness", message->topic, &match);
-		if (match)
-		{
-			setPanelConfig((char *)"brightness", (char *)message->payload, false);
-			printf("Set brightness: '%s'\n", (char *)message->payload);
+		msg_t *p_item;
+		if(ENQUEUE_RESULT_SUCCESS == chooQ_enqueue_alloc(&chooQueue, &p_item)){
+			strcpy(p_item->txt, (char *)message->payload);
+			printf("Topic:%s[%d] insert: %s.\n", message->topic, chooQ_length(&chooQueue), p_item->txt);
+		}
+		else{
+			printf("Message queue is full, topic:%s drop.\n", message->topic);
 		}
 	}
 
-	mosquitto_topic_matches_sub("/display/background/load", message->topic, &match);
-	if (match)
-	{
-		displayImage.image = (char *)message->payload;
-		LoadImage(displayImage.image);
-	}
 
-
-	// Time topics.
-	mosquitto_topic_matches_sub("/display/time/format", message->topic, &match);
-	if (match)
-		displayTime.format = (char *)message->payload;
-
-	mosquitto_topic_matches_sub("/display/time/show", message->topic, &match);
-	if (match)
-		displayTime.show = payloadInt;
-
-	mosquitto_topic_matches_sub("/display/time/x", message->topic, &match);
-	if (match && (payloadInt >= 0) && (payloadInt < canvas->width()))
-		displayTime.x = payloadInt;
-
-	mosquitto_topic_matches_sub("/display/time/y", message->topic, &match);
-	if (match && (payloadInt >= 0) && (payloadInt < canvas->width()))
-		displayTime.y = payloadInt;
-
-	mosquitto_topic_matches_sub("/display/time/dir", message->topic, &match);
-	if (match)
-		displayTime.dir = (char *)message->payload;
-
-	mosquitto_topic_matches_sub("/display/time/font", message->topic, &match);
-	if (match)
-	{
-		displayTime.fontname = (char *)message->payload;
-		fetchFont(&displayTime);
-	}
-
-	mosquitto_topic_matches_sub("/display/time/color", message->topic, &match);
-	if (match)
-		convRGBstr((char *)message->payload, &displayTime.red, &displayTime.green, &displayTime.blue);
-
-	mosquitto_topic_matches_sub("/display/time/zone", message->topic, &match);
-	if (match)
-		strcpy((char *)displayTime.timezone, (char *)message->payload);
-
-
-	// Date topics.
-	mosquitto_topic_matches_sub("/display/date/format", message->topic, &match);
-	if (match)
-		displayDate.format = (char *)message->payload;
-
-	mosquitto_topic_matches_sub("/display/date/show", message->topic, &match);
-	if (match)
-		displayDate.show = payloadInt;
-
-	mosquitto_topic_matches_sub("/display/date/x", message->topic, &match);
-	if (match && (payloadInt >= 0) && (payloadInt < canvas->width()))
-		displayDate.x = payloadInt;
-
-	mosquitto_topic_matches_sub("/display/date/y", message->topic, &match);
-	if (match && (payloadInt >= 0) && (payloadInt < canvas->width()))
-		displayDate.y = payloadInt;
-
-	mosquitto_topic_matches_sub("/display/date/dir", message->topic, &match);
-	if (match)
-		displayDate.dir = (char *)message->payload;
-
-	mosquitto_topic_matches_sub("/display/date/font", message->topic, &match);
-	if (match)
-	{
-		displayDate.fontname = (char *)message->payload;
-		fetchFont(&displayDate);
-	}
-
-	mosquitto_topic_matches_sub("/display/date/color", message->topic, &match);
-	if (match)
-		convRGBstr((char *)message->payload, &displayDate.red, &displayDate.green, &displayDate.blue);
-
-	mosquitto_topic_matches_sub("/display/date/zone", message->topic, &match);
-	if (match)
-		strcpy((char *)displayDate.timezone, (char *)message->payload);
-
-
-	// Text topics.
-	mosquitto_topic_matches_sub("/display/text/format", message->topic, &match);
-	if (match)
-	{
-		if (message->payloadlen == 0x00)
-			displayText.show = false;
-		else
-		{
-			displayText.show = true;
-			strcpy((char *)displayText.format, (char *)message->payload);
-		}
-	}
-
-	mosquitto_topic_matches_sub("/display/text/show", message->topic, &match);
-	if (match)
-		displayText.show = payloadInt;
-
-	mosquitto_topic_matches_sub("/display/text/x", message->topic, &match);
-	if (match && (payloadInt >= 0) && (payloadInt < canvas->width()))
-	{
-		printf("Int:%d\n", payloadInt);
-		displayText.x = payloadInt;
-	}
-
-	mosquitto_topic_matches_sub("/display/text/y", message->topic, &match);
-	if (match && (payloadInt >= 0) && (payloadInt < canvas->width()))
-		displayText.y = payloadInt;
-
-	mosquitto_topic_matches_sub("/display/text/dir", message->topic, &match);
-	if (match)
-		displayText.dir = (char *)message->payload;
-
-	mosquitto_topic_matches_sub("/display/text/font", message->topic, &match);
-	if (match)
-	{
-		displayText.fontname = (char *)message->payload;
-		fetchFont(&displayText);
-	}
-
-	mosquitto_topic_matches_sub("/display/text/color", message->topic, &match);
-	if (match)
-		convRGBstr((char *)message->payload, &displayText.red, &displayText.green, &displayText.blue);
-
-
-	*/
 }
 
-int initMQTT(void)
-{
+int initMQTT(void){
 	// uint8_t reconnect = true;
 	//char clientid[24];
 	int rc = 0;
@@ -842,8 +737,7 @@ int initMQTT(void)
 }
 
 
-int runMQTT(void)
-{
+int runMQTT(void){
 	int rc = 0;
 	//tmillis_t old = GetTimeInMillis();
 
@@ -904,9 +798,7 @@ int runMQTT(void)
 
 
 
-int main(int argc, char *argv[])
-{
-	int vsync_multiple = 1;
+int main(int argc, char *argv[]){
 
 	signal(SIGTERM, InterruptHandler);
 	signal(SIGINT, InterruptHandler);
@@ -934,13 +826,15 @@ int main(int argc, char *argv[])
 	}
 
 	initPanel(argc, argv);
+	chooQ_init(&chooQueue);	//初始化队列
 
 	initMQTT();
-	
+
 
 	while(!Interrupt)
 	{
 		for(int i = 0; i < 100; i++){
+			int vsync_multiple = 1;
 			DisplayAnimation(canvas, offscreen_canvas, vsync_multiple); //1000 frames per second
 			SleepMillis(1);	//
 		}

@@ -13,6 +13,7 @@
 	"mqtt":{
 		"clientid": "chooPanel",
 		"host": "192.168.31.79",
-		"port": "1883"
+		"port": "1883",
+		"root": "/chooPanel"
 	}
 }
