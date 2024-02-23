@@ -1,5 +1,5 @@
 CXXFLAGS=-Wall -O3 -g -Wextra -Wno-unused-parameter
-OBJECTS=chooPanel.o
+OBJECTS=chooPanel.o tween.o tween_easing.o
 BINARIES=chooPanel
 
 OPTIONAL_OBJECTS=video-viewer.o
@@ -19,7 +19,7 @@ LDFLAGS+=-L$(RGB_LIBDIR) -l$(RGB_LIBRARY_NAME) -L$(JSON_LIBDIR) -l$(JSON_LIBRARY
 
 all : $(BINARIES)
 
-chooPanel: chooPanel.o $(RGB_LIBRARY)
+chooPanel: chooPanel.o tween.o tween_easing.o $(RGB_LIBRARY)
 	$(CXX) $(CXXFLAGS) chooPanel.o -o $@ $(LDFLAGS)
 
 
@@ -28,6 +28,12 @@ chooPanel: chooPanel.o $(RGB_LIBRARY)
 
 chooPanel.o : chooPanel.cc
 	$(CXX) -I$(RGB_INCDIR) -I$(JSON_INCDIR) $(CXXFLAGS) -c -o $@ $<
+
+tween.o : tween.c
+	$(CXX) $(CXXFLAGS) -c -o $@ $<
+
+tween_easing.o : tween_easing.c
+	$(CXX) $(CXXFLAGS) -c -o $@ $<
 
 clean:
 	rm -f $(OBJECTS) $(BINARIES) $(OPTIONAL_OBJECTS) $(OPTIONAL_BINARIES)
