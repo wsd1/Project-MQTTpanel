@@ -30,8 +30,8 @@ struct NAME {                                                                   
 void NAME ## _init(struct NAME * p_queue);                                              \
 enum enqueue_result NAME ##_enqueue(struct NAME * p_queue, ITEM_TYPE * p_new_item);     \
 enum dequeue_result NAME ##_dequeue(struct NAME * p_queue, ITEM_TYPE * p_item_out);     \
-enum enqueue_result NAME ##_enqueue_allc(struct NAME * p_queue, ITEM_TYPE * p_new_item);\
-enum dequeue_result NAME ##_dequeue_ptr(struct NAME * p_queue, ITEM_TYPE * p_item_out); \
+enum enqueue_result NAME ##_enqueue_allc(struct NAME * p_queue, ITEM_TYPE ** p_new_item);\
+enum dequeue_result NAME ##_dequeue_ptr(struct NAME * p_queue, ITEM_TYPE ** p_item_out); \
 bool NAME ##_is_empty(struct NAME * p_queue);                                           \
 int NAME ##_length(struct NAME * p_queue);
 

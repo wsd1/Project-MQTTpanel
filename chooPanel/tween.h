@@ -61,6 +61,7 @@
 extern "C" {
 #endif
 
+#define ENGINE_IS_IDLE(engine) (NULL == (engine)->tweens)
 
 //结构大致说明
 // Tween_Engine 挂了一串 Tween_Node，每一个node都有个tween

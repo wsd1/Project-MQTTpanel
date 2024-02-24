@@ -20,7 +20,7 @@ LDFLAGS+=-L$(RGB_LIBDIR) -l$(RGB_LIBRARY_NAME) -L$(JSON_LIBDIR) -l$(JSON_LIBRARY
 all : $(BINARIES)
 
 chooPanel: chooPanel.o tween.o tween_easing.o $(RGB_LIBRARY)
-	$(CXX) $(CXXFLAGS) chooPanel.o -o $@ $(LDFLAGS)
+	$(CXX) $(CXXFLAGS) $(OBJECTS) -o $@ $(LDFLAGS)
 
 
 %.o : %.cc

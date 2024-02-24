@@ -603,16 +603,16 @@ int initPanel(int argc, char *argv[])
 	if (canvas == NULL)
 		return 1;
 
-//	if (large_display)
-//	{
-//		// Mapping the coordinates of a 32x128 display mapped to a square of 64x64,
-//		// or any other U-shape.
-//		canvas->ApplyStaticTransformer(rgb_matrix::UArrangementTransformer( panelOptions.parallel));
-//	}
+	//if (large_display)
+	//{
+	//	// Mapping the coordinates of a 32x128 display mapped to a square of 64x64,
+	//	// or any other U-shape.
+	//	canvas->ApplyStaticTransformer(rgb_matrix::UArrangementTransformer( panelOptions.parallel));
+	//}
 
 	if (angle >= -360)
 	{
-//		canvas->ApplyStaticTransformer(rgb_matrix::RotateTransformer(angle));
+	//	canvas->ApplyStaticTransformer(rgb_matrix::RotateTransformer(angle));
 		printf("-------------------DEBUG HERE 2-------------------\n");
 	}
 

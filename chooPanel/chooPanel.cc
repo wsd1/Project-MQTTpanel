@@ -31,16 +31,18 @@ extern "C"
 #include "mosquitto.h"
 
 #include "queue.h"
+#include "tween.h"
 
 #define mqtt_host "192.168.31.79"
 #define mqtt_port 1883
 #define RECONNECT_TIMEOUT 10000
+#define MSG_LENGTH_MAX 128
 
 int sflags = 0;
 #define json_object_to_json_string(obj) json_object_to_json_string_ext(obj,sflags)
 
 
-using rgb_matrix::Canvas;
+//using rgb_matrix::Canvas;
 using rgb_matrix::Color;
 using rgb_matrix::FrameCanvas;
 using rgb_matrix::RGBMatrix;
@@ -49,7 +51,7 @@ using rgb_matrix::RGBMatrix;
 
 
 
-void DisplayAnimation(RGBMatrix *matrix, FrameCanvas *offscreen_canvas, int vsync_multiple);
+void DisplayAnimation(RGBMatrix *matrix, FrameCanvas *off_canvas, int vsync_multiple);
 
 
 // ################################################################################
@@ -68,12 +70,16 @@ typedef int64_t tmillis_t;
 
 
 typedef struct {
-	char txt[512];
+    Tween* tween;
+	char txt[MSG_LENGTH_MAX*3];	//根据最长的msg设定buf utf8 汉字是3字节
 }msg_t;
 
 QUEUE_DECLARATION(chooQ, msg_t, 100);	//msg_t x 100 
 QUEUE_DEFINITION(chooQ, msg_t);
 struct chooQ chooQueue;
+
+
+Tween_Engine* glbEngine = NULL;
 
 
 
@@ -84,8 +90,9 @@ json_object *ConfigJSON;
 struct mosquitto *mosq;
 RGBMatrix::Options panelOptions;
 
-RGBMatrix *canvas;
+RGBMatrix *glbCanvas;
 FrameCanvas *offscreen_canvas;
+rgb_matrix::Font glbFont;
 
 mqttCfg_t glbMqttCfg;
 volatile bool Interrupt = false;
@@ -103,15 +110,12 @@ static void spinning(){
 	spin_idx = spin_idx % 4;
 }
 
-
-
 static tmillis_t GetTimeInMillis()
 {
 	struct timeval tp;
 	gettimeofday(&tp, NULL);
 	return tp.tv_sec * 1000 + tp.tv_usec / 1000;
 }
-
 
 static void SleepMillis(tmillis_t milli_seconds)
 {
@@ -121,6 +125,85 @@ static void SleepMillis(tmillis_t milli_seconds)
 	ts.tv_nsec = (milli_seconds % 1000) * 1000000;
 	nanosleep(&ts, NULL);
 }
+
+//参考之：https://github.com/wsd1/rpi-rgb-led-matrix/blob/master/lib/utf8-internal.h
+int utf8_bytes(const char* it) {
+  uint8_t cp = *it;
+  if( 0 == cp)
+	return 0;
+  else if (cp < 0x80)
+    return 1;
+  else if ((cp & 0xE0) == 0xC0)
+    return 2;
+  else if ((cp & 0xF0) == 0xE0)
+    return 3;
+  else if ((cp & 0xF8) == 0xF0)
+    return 4;
+  else if ((cp & 0xFC) == 0xF8)
+    return 5;
+  else if ((cp & 0xFE) == 0xFC)
+    return 6;
+  else
+	return -1;
+}
+
+
+//拷贝utf8字符串，参数n表示最多字符个数，且如果源超出字数，会截断保证输出字数，且目标尾部会加'\0'
+int strncpy_utf8(const char* str, char* dst, int n){
+	if (!str || n <= 0) return 0;
+	int i = utf8_bytes(str), bytes = 0, chars = 0;
+
+	//循环取字符，直到结尾 或者 字符数超限
+	while(i > 0 && chars < n){
+		bytes += i; chars++;
+		i = utf8_bytes(str + bytes);
+	}
+
+	//拷贝到目标 并处理结尾
+	if(bytes > 0){
+		memcpy(dst, str, bytes);
+		dst[bytes] = '\0';
+	}
+
+	//返回 字符数量
+	return chars;
+}
+
+
+int strlen_utf8(const char* str){
+	if (!str) return 0;
+	int len = (int)strlen(str), ret = 0;
+
+	for (const char* sptr = str; (sptr - str) < len && *sptr;)	{
+		unsigned char ch = (unsigned char)(*sptr);
+		if (ch < 0x80)		{
+			sptr++;	// ascii
+			ret++;
+		}
+		else if (ch < 0xc0)		{
+			sptr++;	// invalid char
+		}
+		else if (ch < 0xe0)		{
+			sptr += 2;
+			ret++;
+		}
+		else if (ch < 0xf0)		{
+			sptr += 3;
+			ret++;
+		}
+		else		{
+			// 统一4个字节
+			sptr += 4;
+			ret++;
+		}
+	}
+	return ret;
+}
+
+
+// ################################################################################
+
+
 
 
 
@@ -652,17 +735,47 @@ int initPanel(int argc, char *argv[]){
 	}
 
 	// Prepare matrix
-	canvas = CreateMatrixFromOptions(panelOptions, runtime_opt);
-	if (canvas == NULL)
+	glbCanvas = CreateMatrixFromOptions(panelOptions, runtime_opt);
+	if (glbCanvas == NULL)
 		return 1;
 
-	offscreen_canvas = canvas->CreateFrameCanvas();
-	printf("Panel size: %dx%d. Hardware gpio mapping: %s\n", canvas->width(), canvas->height(), panelOptions.hardware_mapping);
+	offscreen_canvas = glbCanvas->CreateFrameCanvas();
+	printf("Panel size: %dx%d. Hardware gpio mapping: %s\n", glbCanvas->width(), glbCanvas->height(), panelOptions.hardware_mapping);
 
 	return 0;
 }
 
 // ################################################################################
+
+
+
+void start_engine_from_queue(struct chooQ* pQ ){
+	//从q中取msg
+	msg_t *msg_item;
+	if(DEQUEUE_RESULT_SUCCESS == chooQ_dequeue_ptr(pQ, &msg_item))
+		Tween_StartTween(msg_item->tween, GetTimeInMillis());	//并运行第一个msg的tween
+
+}
+
+//msg tween例行更新
+void update_msg_draw(Tween* tween) {
+	msg_t *msg_item = (msg_t*)tween->data;
+	Color color(0, 60, 0);
+	rgb_matrix::DrawText(offscreen_canvas, glbFont, (int)tween->props.x, 24, color, NULL, msg_item->txt, 0);
+}
+
+//msg tween正式开始 回调
+void start_msg_tween(Tween* tween) {
+
+}
+
+//msg tween 结束 回调
+void complete_msg_tween(Tween* tween){
+
+//if(ENGINE_IS_IDLE(glbEngine))	start_engine_from_queue(&chooQueue);
+
+}
+
 
 
 
@@ -692,13 +805,38 @@ void message_callback(struct mosquitto *mosq, void *obj, const struct mosquitto_
 
 	char channel[128];
 	sprintf(channel, "%s/msg", glbMqttCfg.root);
+
+	//匹配msg类型
 	mosquitto_topic_matches_sub(channel, message->topic, &match);
 	if (match)
 	{
-		msg_t *p_item;
-		if(ENQUEUE_RESULT_SUCCESS == chooQ_enqueue_alloc(&chooQueue, &p_item)){
-			strcpy(p_item->txt, (char *)message->payload);
-			printf("Topic:%s[%d] insert: %s.\n", message->topic, chooQ_length(&chooQueue), p_item->txt);
+		msg_t *msg_item;
+		if(ENQUEUE_RESULT_SUCCESS == chooQ_enqueue_alloc(&chooQueue, &msg_item)){
+
+			//拷贝 msg ，如果过长会截断
+			int chars = strncpy_utf8((char*)message->payload, msg_item->txt, MSG_LENGTH_MAX);
+			if(chars == MSG_LENGTH_MAX)
+				printf("Message exceeded %d chars.Trimmed.\n", MSG_LENGTH_MAX);
+
+			printf("Topic:%s[%d] insert: %s.\n", message->topic, chooQ_length(&chooQueue), msg_item->txt);
+
+			//根据字符串 计算输出信息的图像宽度。借助DrawText()函数，往y=-512 地方画入，不会造成实际绘制，仅仅计算图像长度
+			Color color(0, 0, 0);
+			int width = rgb_matrix::DrawText(offscreen_canvas, glbFont, 0, -512, color, NULL, msg_item->txt, 0);
+
+			//通过 字符串图像的长度 和 屏幕长度，来设计 tween 并挂载到 msg 对象上
+			Tween_Props props = Tween_MakeProps(glbCanvas->width(), 0, 0, 0, 0);	//从屏幕右边缘
+			Tween_Props toProps = Tween_MakeProps(-width, 0, 0, 0, 0);	//到左侧完全隐没
+			int move = glbCanvas->width() + width; 
+			int time = move * glbCanvas->width() / 2000;	//以屏幕宽度运动2s为基础，计算运动时间
+			msg_item->tween = Tween_CreateTween(glbEngine, &props, &toProps, time, TWEEN_EASING_LINEAR, update_msg_draw, msg_item);	
+			msg_item->tween->startCallback = start_msg_tween;
+			msg_item->tween->completeCallback = complete_msg_tween;
+
+			if(ENGINE_IS_IDLE(glbEngine))
+				start_engine_from_queue(&chooQueue);
+
+			
 		}
 		else{
 			printf("Message queue is full, topic:%s drop.\n", message->topic);
@@ -796,9 +934,21 @@ int runMQTT(void){
 }
 
 
-
+void update(Tween* tween) {
+    //Square* square;
+    //square  = (Square*)tween->data;
+	char buf[128];
+	printf("\r");
+	int i;
+	for(i = 0; i < 100; i++)
+		buf[i] = i == (int)tween->props.x? '*':'-';
+	buf[i] = '\0';
+	printf("%s", buf);
+}
 
 int main(int argc, char *argv[]){
+
+
 
 	signal(SIGTERM, InterruptHandler);
 	signal(SIGINT, InterruptHandler);
@@ -817,7 +967,7 @@ int main(int argc, char *argv[]){
 	if (ConfigJSON != NULL)
 	{
 		printf("Done\n");
-		printf("OK: json_object_from_fd(%s)=%s\n", filename, json_object_to_json_string(ConfigJSON));
+		//printf("OK: json_object_from_fd(%s)=%s\n", filename, json_object_to_json_string(ConfigJSON));
 	}
 	else
 	{
@@ -825,28 +975,65 @@ int main(int argc, char *argv[]){
 		exit(1);
 	}
 
+	printf("Loading font...");
+	int rt = glbFont.LoadFont("msyh24.bdf");
+	if (!rt)
+	{
+		printf("Done\n");
+	}
+	else
+	{
+		fprintf(stderr, "FAIL: unable to load font: %s\n", "msyh24.bdf");
+		exit(1);
+	}
+
+
 	initPanel(argc, argv);
 	chooQ_init(&chooQueue);	//初始化队列
 
 	initMQTT();
 
 
+    glbEngine = Tween_CreateEngine();
+   
+
+
+    Tween_Props props = Tween_MakeProps(0, 0, 0, 0, 0);
+    Tween_Props toProps = Tween_MakeProps(100, 0, 0, 0, 0);
+
+    Tween* tween = Tween_CreateTween(glbEngine, &props, &toProps, 3000, TWEEN_EASING_BOUNCE_OUT, update, NULL);
+    tween->delay = 3000;
+    //tweenBack = Tween_CreateTween(glbEngine, &toProps, &props, 3000, TWEEN_EASING_ELASTIC_IN_OUT, update, &square);
+    //Tween_ChainTweens(tween, tweenBack);
+    //Tween_ChainTweens(tweenBack, tween);
+    Tween_StartTween(tween, GetTimeInMillis());
+
+
+
 	while(!Interrupt)
 	{
-		for(int i = 0; i < 100; i++){
+		for(int i = 0; i < 200; i++){
 			int vsync_multiple = 1;
-			DisplayAnimation(canvas, offscreen_canvas, vsync_multiple); //1000 frames per second
-			SleepMillis(1);	//
+			DisplayAnimation(glbCanvas, offscreen_canvas, vsync_multiple); //1000 frames per second
+	        
+			Tween_UpdateEngine(glbEngine, GetTimeInMillis());
+
+			SleepMillis(5);	//
 		}
 		runMQTT();	//10 times per second.
-		spinning();
+		//spinning();
 	}
+
+
+    Tween_DestroyTween(tween);
+    Tween_DestroyEngine(glbEngine);
+	glbEngine = NULL;
 
 	mosquitto_lib_cleanup();
 
 	// Animation finished. Shut down the RGB canvas.
-	canvas->Clear();
-	delete canvas;
+	glbCanvas->Clear();
+	delete glbCanvas;
 
 	if (Interrupt)
 	{
@@ -862,5 +1049,7 @@ int main(int argc, char *argv[]){
 
 void DisplayAnimation(RGBMatrix *matrix, FrameCanvas *offscreen_canvas, int vsync_multiple)
 {
+
+	offscreen_canvas = matrix->SwapOnVSync(offscreen_canvas, vsync_multiple);
 
 }
