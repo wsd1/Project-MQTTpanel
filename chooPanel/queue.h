@@ -50,7 +50,7 @@ enum enqueue_result NAME ##_enqueue(struct NAME  * p_queue, ITEM_TYPE * p_new_it
     return ENQUEUE_RESULT_FULL;                                                         \
   }                                                                                     \
                                                                                         \
-  uint16_t i = (p_queue->write_idx)++ & (capacity - 1);                                 \
+  uint16_t i = (p_queue->write_idx)++ % capacity ;                                      \
   p_queue->items[i] = *p_new_item;                                                      \
   return ENQUEUE_RESULT_SUCCESS;                                                        \
 }                                                                                       \
@@ -63,7 +63,7 @@ enum dequeue_result NAME ##_dequeue(struct NAME * p_queue, ITEM_TYPE * p_item_ou
     return DEQUEUE_RESULT_EMPTY;                                                        \
   }                                                                                     \
                                                                                         \
-  uint16_t i = (p_queue->read_idx)++ & (capacity - 1);                                  \
+  uint16_t i = (p_queue->read_idx)++ % capacity ;                                       \
   *p_item_out = p_queue->items[i];                                                      \
                                                                                         \
   return DEQUEUE_RESULT_SUCCESS;                                                        \
@@ -77,7 +77,7 @@ enum enqueue_result NAME ##_enqueue_alloc(struct NAME  * p_queue, ITEM_TYPE ** p
     return ENQUEUE_RESULT_FULL;                                                         \
   }                                                                                     \
                                                                                         \
-  uint16_t i = (p_queue->write_idx)++ & (capacity - 1);                                 \
+  uint16_t i = (p_queue->write_idx)++ % capacity ;                                      \
   *p_item = &(p_queue->items[i]);                                                       \
   return ENQUEUE_RESULT_SUCCESS;                                                        \
 }                                                                                       \
@@ -90,7 +90,7 @@ enum dequeue_result NAME ##_dequeue_ptr(struct NAME * p_queue, ITEM_TYPE ** p_it
     return DEQUEUE_RESULT_EMPTY;                                                        \
   }                                                                                     \
                                                                                         \
-  uint16_t i = (p_queue->read_idx)++ & (capacity - 1);                                  \
+  uint16_t i = (p_queue->read_idx)++ % capacity ;                                       \
   *p_item_out = &(p_queue->items[i]);                                                   \
                                                                                         \
   return DEQUEUE_RESULT_SUCCESS;                                                        \

@@ -51,8 +51,6 @@ using rgb_matrix::RGBMatrix;
 
 
 
-void DisplayAnimation(RGBMatrix *matrix, FrameCanvas *off_canvas, int vsync_multiple);
-
 
 // ################################################################################
 
@@ -91,7 +89,7 @@ struct mosquitto *mosq;
 RGBMatrix::Options panelOptions;
 
 RGBMatrix *glbCanvas;
-FrameCanvas *offscreen_canvas;
+FrameCanvas *glbOffscreen_canvas;
 rgb_matrix::Font glbFont;
 
 mqttCfg_t glbMqttCfg;
@@ -110,15 +108,13 @@ static void spinning(){
 	spin_idx = spin_idx % 4;
 }
 
-static tmillis_t GetTimeInMillis()
-{
+static tmillis_t GetTimeInMillis(){
 	struct timeval tp;
 	gettimeofday(&tp, NULL);
 	return tp.tv_sec * 1000 + tp.tv_usec / 1000;
 }
 
-static void SleepMillis(tmillis_t milli_seconds)
-{
+static void SleepMillis(tmillis_t milli_seconds){
 	if (milli_seconds <= 0) return;
 	struct timespec ts;
 	ts.tv_sec = milli_seconds / 1000;
@@ -203,6 +199,7 @@ int strlen_utf8(const char* str){
 
 // ################################################################################
 
+bool is_canvas_dirty = false;
 
 
 
@@ -210,27 +207,22 @@ int strlen_utf8(const char* str){
 static void setOffline(){
 	glbIsOnline = false;
 }
-
 static bool isOnline(){
 	return glbIsOnline;
 }
 static bool isTimeoutForConnect(){
 	return (GetTimeInMillis() - glbLastConnection >= RECONNECT_TIMEOUT);
 }
-
 static void setTimeoutConnected(){
 	glbIsOnline = true;
 	glbLastConnection = GetTimeInMillis();
 }
-
 static void setTimeoutConnecting(){
 	glbLastConnection = GetTimeInMillis();
 }
-
 static void InterruptHandler(int signo){
 	Interrupt = true;
 }
-
 static int usage(const char *progname){
 	fprintf(stderr, "usage: %s [options] <image> [option] [<image> ...]\n", progname);
 
@@ -316,7 +308,6 @@ void setPanelConfig(char *Key, bool Value, bool JSONpref){
 		(*ptrKey) = Value;
 }
 
-
 void setPanelConfig(char *Key, char *Value, bool JSONpref){
 	struct json_object *rootObject;
 	if (!json_object_object_get_ex(ConfigJSON, "panel", &rootObject))
@@ -345,7 +336,6 @@ void setPanelConfig(char *Key, char *Value, bool JSONpref){
 	else
 		strcpy(Value, ptrKey);
 }
-
 
 void setPanelConfig(char *Key, int Value, bool JSONpref){
 	struct json_object *rootObject;
@@ -399,9 +389,6 @@ void setPanelConfig(char *Key, int Value, bool JSONpref){
 		(*ptrKey) = Value;
 }
 
-
-
-
 // ConfigJSON.panel[key] => panelOptions[key] 
 // JSON => struct
 void setPanelConfig(char *Key){	
@@ -449,7 +436,6 @@ void setPanelConfig(char *Key){
 
 }
 
-
 // ################################################################################
 int initPanel(int argc, char *argv[]){
 
@@ -472,33 +458,28 @@ int initPanel(int argc, char *argv[]){
 	struct json_object *rootObject;
 
 	//从JSON中读取其他配置 ConfigJSON.mqtt[] => glbMqttCfg[] 
-	if (json_object_object_get_ex(ConfigJSON, "mqtt", &rootObject))
-	{
+	if (json_object_object_get_ex(ConfigJSON, "mqtt", &rootObject))	{
 		struct json_object *keyObject;
 
-		if (!json_object_object_get_ex(rootObject, "clientid", &keyObject))
-		{
+		if (!json_object_object_get_ex(rootObject, "clientid", &keyObject)){
 			keyObject = json_object_new_string("defaultID:chooPanel");
 			json_object_object_add(rootObject, "clientid", keyObject);
 		}
 		strcpy(glbMqttCfg.clientid, json_object_get_string(keyObject));
 
-		if (!json_object_object_get_ex(rootObject, "host", &keyObject))
-		{
+		if (!json_object_object_get_ex(rootObject, "host", &keyObject)){
 			keyObject = json_object_new_string("mqtt.eclipseprojects.io");	//paho.mqtt.c demo broker
 			json_object_object_add(rootObject, "host", keyObject);
 		}
 		strcpy(glbMqttCfg.host, json_object_get_string(keyObject));
 
-		if (!json_object_object_get_ex(rootObject, "port", &keyObject))
-		{
+		if (!json_object_object_get_ex(rootObject, "port", &keyObject)){
 			keyObject = json_object_new_int(1883);
 			json_object_object_add(rootObject, "port", keyObject);
 		}
 		glbMqttCfg.port = json_object_get_int(keyObject);
 
-		if (!json_object_object_get_ex(rootObject, "root", &keyObject))
-		{
+		if (!json_object_object_get_ex(rootObject, "root", &keyObject)){
 			keyObject = json_object_new_string("/chooPanel");
 			json_object_object_add(rootObject, "root", keyObject);
 		}
@@ -507,239 +488,50 @@ int initPanel(int argc, char *argv[]){
 	}
 	// printf("JSON(date):%s\n", json_object_get_string(rootObject));
 
-
-
-	/*
-	//从JSON中读取其他配置 ConfigJSON.background[] => displayImage[] 
-	if (json_object_object_get_ex(ConfigJSON, "background", &rootObject))
-	{
-		struct json_object *keyObject;
-
-		if (!json_object_object_get_ex(rootObject, "image", &keyObject))
-		{
-			keyObject = json_object_new_string("Alien.gif");
-			json_object_object_add(rootObject, "image", keyObject);
-		}
-		displayImage.image = json_object_get_string(keyObject);
-
-		if (!json_object_object_get_ex(rootObject, "dir", &keyObject))
-		{
-			keyObject = json_object_new_string("images/");
-			json_object_object_add(rootObject, "dir", keyObject);
-		}
-		displayImage.dir = json_object_get_string(keyObject);
-
-		if (!json_object_object_get_ex(rootObject, "show", &keyObject))
-		{
-			keyObject = json_object_new_boolean(1);
-			json_object_object_add(rootObject, "show", keyObject);
-		}
-		displayImage.show = json_object_get_boolean(keyObject);
-	}
-	// printf("JSON(background):%s\n", json_object_get_string(rootObject));
-
-	//从JSON中读取其他配置 ConfigJSON.time[] => displayTime[] 
-	if (json_object_object_get_ex(ConfigJSON, "time", &rootObject))
-	{
-		struct json_object *keyObject;
-
-		if (!json_object_object_get_ex(rootObject, "format", &keyObject))
-		{
-			keyObject = json_object_new_string("%H:%M");
-			json_object_object_add(rootObject, "format", keyObject);
-		}
-		displayTime.format = json_object_get_string(keyObject);
-
-		if (!json_object_object_get_ex(rootObject, "dir", &keyObject))
-		{
-			keyObject = json_object_new_string("/usr/local/share/fonts/rgbmatrix/");
-			json_object_object_add(rootObject, "dir", keyObject);
-		}
-		displayTime.dir = json_object_get_string(keyObject);
-
-		if (!json_object_object_get_ex(rootObject, "font", &keyObject))
-		{
-			keyObject = json_object_new_string("8x13.bdf");
-			json_object_object_add(rootObject, "font", keyObject);
-		}
-		displayTime.fontname = json_object_get_string(keyObject);
-		fetchFont(&displayTime);
-
-		if (!json_object_object_get_ex(rootObject, "x", &keyObject))
-		{
-			keyObject = json_object_new_int(8);
-			json_object_object_add(rootObject, "x", keyObject);
-		}
-		displayTime.x = json_object_get_int(keyObject);
-
-		if (!json_object_object_get_ex(rootObject, "y", &keyObject))
-		{
-			keyObject = json_object_new_int(10);
-			json_object_object_add(rootObject, "y", keyObject);
-		}
-		displayTime.y = json_object_get_int(keyObject);
-
-		if (!json_object_object_get_ex(rootObject, "show", &keyObject))
-		{
-			keyObject = json_object_new_boolean(1);
-			json_object_object_add(rootObject, "show", keyObject);
-		}
-		displayTime.show = json_object_get_boolean(keyObject);
-
-		if (!json_object_object_get_ex(rootObject, "color", &keyObject))
-		{
-			keyObject = json_object_new_string("FF00FF");
-			json_object_object_add(rootObject, "color", keyObject);
-		}
-		convRGBstr((char *)json_object_get_string(keyObject), &displayTime.red, &displayTime.green, &displayTime.blue);
-
-		if (!json_object_object_get_ex(rootObject, "timezone", &keyObject))
-		{
-			keyObject = json_object_new_string(getenv("TZ"));
-			json_object_object_add(rootObject, "timezone", keyObject);
-		}
-		displayTime.timezone = json_object_get_string(keyObject);
-	}
-	// printf("JSON(time):%s\n", json_object_get_string(rootObject));
-
-	//从JSON中读取其他配置 ConfigJSON.date[] => displayDate[] 
-	if (json_object_object_get_ex(ConfigJSON, "date", &rootObject))
-	{
-		struct json_object *keyObject;
-
-		if (!json_object_object_get_ex(rootObject, "format", &keyObject))
-		{
-			keyObject = json_object_new_string("%Y/%m/%d");
-			json_object_object_add(rootObject, "format", keyObject);
-		}
-		displayDate.format = json_object_get_string(keyObject);
-
-		if (!json_object_object_get_ex(rootObject, "dir", &keyObject))
-		{
-			keyObject = json_object_new_string("/usr/local/share/fonts/rgbmatrix/");
-			json_object_object_add(rootObject, "dir", keyObject);
-		}
-		displayDate.dir = json_object_get_string(keyObject);
-
-		if (!json_object_object_get_ex(rootObject, "font", &keyObject))
-		{
-			keyObject = json_object_new_string("6x9.bdf");
-			json_object_object_add(rootObject, "font", keyObject);
-		}
-		displayDate.fontname = json_object_get_string(keyObject);
-		fetchFont(&displayDate);
-
-		if (!json_object_object_get_ex(rootObject, "x", &keyObject))
-		{
-			keyObject = json_object_new_int(8);
-			json_object_object_add(rootObject, "x", keyObject);
-		}
-		displayDate.x = json_object_get_int(keyObject);
-
-		if (!json_object_object_get_ex(rootObject, "y", &keyObject))
-		{
-			keyObject = json_object_new_int(30);
-			json_object_object_add(rootObject, "y", keyObject);
-		}
-		displayDate.y = json_object_get_int(keyObject);
-
-		if (!json_object_object_get_ex(rootObject, "show", &keyObject))
-		{
-			keyObject = json_object_new_boolean(1);
-			json_object_object_add(rootObject, "show", keyObject);
-		}
-		displayDate.show = json_object_get_boolean(keyObject);
-
-		if (!json_object_object_get_ex(rootObject, "color", &keyObject))
-		{
-			keyObject = json_object_new_string("FF00FF");
-			json_object_object_add(rootObject, "color", keyObject);
-		}
-		convRGBstr((char *)json_object_get_string(keyObject), &displayDate.red, &displayDate.green, &displayDate.blue);
-
-		if (!json_object_object_get_ex(rootObject, "timezone", &keyObject))
-		{
-			keyObject = json_object_new_string(getenv("TZ"));
-			json_object_object_add(rootObject, "timezone", keyObject);
-		}
-		displayDate.timezone = json_object_get_string(keyObject);
-	}
-	// printf("JSON(date):%s\n", json_object_get_string(rootObject));
-
-
-	//从JSON中读取其他配置 ConfigJSON.text[] => displayText[] 
-	if (json_object_object_get_ex(ConfigJSON, "text", &rootObject))
-	{
-		struct json_object *keyObject;
-
-		if (!json_object_object_get_ex(rootObject, "format", &keyObject))
-		{
-			keyObject = json_object_new_string("");
-			json_object_object_add(rootObject, "format", keyObject);
-		}
-		displayText.format = json_object_get_string(keyObject);
-
-		if (!json_object_object_get_ex(rootObject, "dir", &keyObject))
-		{
-			keyObject = json_object_new_string("/usr/local/share/fonts/rgbmatrix/");
-			json_object_object_add(rootObject, "dir", keyObject);
-		}
-		displayText.dir = json_object_get_string(keyObject);
-
-		if (!json_object_object_get_ex(rootObject, "font", &keyObject))
-		{
-			keyObject = json_object_new_string("6x9.bdf");
-			json_object_object_add(rootObject, "font", keyObject);
-		}
-		displayText.fontname = json_object_get_string(keyObject);
-		fetchFont(&displayText);
-
-		if (!json_object_object_get_ex(rootObject, "x", &keyObject))
-		{
-			keyObject = json_object_new_int(0);
-			json_object_object_add(rootObject, "x", keyObject);
-		}
-		displayText.x = json_object_get_int(keyObject);
-
-		if (!json_object_object_get_ex(rootObject, "y", &keyObject))
-		{
-			keyObject = json_object_new_int(30);
-			json_object_object_add(rootObject, "y", keyObject);
-		}
-		displayText.y = json_object_get_int(keyObject);
-
-		if (!json_object_object_get_ex(rootObject, "show", &keyObject))
-		{
-			keyObject = json_object_new_boolean(0);
-			json_object_object_add(rootObject, "show", keyObject);
-		}
-		displayText.show = json_object_get_boolean(keyObject);
-
-		if (!json_object_object_get_ex(rootObject, "color", &keyObject))
-		{
-			keyObject = json_object_new_string("888888");
-			json_object_object_add(rootObject, "color", keyObject);
-		}
-		convRGBstr((char *)json_object_get_string(keyObject), &displayText.red, &displayText.green, &displayText.blue);
-
-		displayText.timezone = "";	// Not used for plain text.
-	}
-	// printf("JSON(date):%s\n", json_object_get_string(rootObject));
-	*/
-
-
 	rgb_matrix::RuntimeOptions runtime_opt;
-	if (!rgb_matrix::ParseOptionsFromFlags(&argc, &argv, &panelOptions, &runtime_opt))
-	{
+	if (!rgb_matrix::ParseOptionsFromFlags(&argc, &argv, &panelOptions, &runtime_opt)){
 		return usage(argv[0]);
 	}
+	/*
+	printf("matrix options: ---------------------\r\n");
+	printf("hardware_mapping:%s\n", panelOptions.hardware_mapping);
+	printf("rows:%d\n", panelOptions.rows);
+	printf("cols:%d\n", panelOptions.cols);
+	printf("chain_length:%d\n", panelOptions.chain_length);
+	printf("parallel:%d\n", panelOptions.parallel);
+	printf("pwm_bits:%d\n", panelOptions.pwm_bits);
+	printf("pwm_lsb_nanoseconds:%d\n", panelOptions.pwm_lsb_nanoseconds);
+	printf("pwm_dither_bits:%d\n", panelOptions.pwm_dither_bits);
+	printf("brightness:%d\n", panelOptions.brightness);
+	printf("scan_mode:%d\n", panelOptions.scan_mode);
+	printf("row_address_type:%d\n", panelOptions.row_address_type);
+	printf("multiplexing:%d\n", panelOptions.multiplexing);
+	printf("disable_hardware_pulsing:%s\n", panelOptions.disable_hardware_pulsing? "true" : "false");
+	printf("show_refresh_rate:%s\n", panelOptions.show_refresh_rate? "true" : "false");
+	printf("inverse_colors:%s\n", panelOptions.inverse_colors? "true" : "false");
+	printf("led_rgb_sequence:%s\n", panelOptions.led_rgb_sequence);
+	printf("pixel_mapper_config:%s\n", panelOptions.pixel_mapper_config);
+	printf("panel_type:%s\n", panelOptions.panel_type);
+	printf("limit_refresh_rate_hz:%d\n", panelOptions.limit_refresh_rate_hz);
 
+	printf("runtime options: ---------------------\r\n");
+	printf("gpio_slowdown:%d\n", runtime_opt.gpio_slowdown);
+	printf("daemon:%d\n", runtime_opt.daemon);
+	printf("drop_privileges:%d\n", runtime_opt.drop_privileges);
+	printf("do_gpio_init:%s\n", runtime_opt.do_gpio_init? "true" : "false");
+	printf("drop_priv_user:%s\n", runtime_opt.drop_priv_user);
+	printf("drop_priv_group:%s\n", runtime_opt.drop_priv_group);
+
+	printf(":%d\n", panelOptions.);
+	*/
+
+	runtime_opt.gpio_slowdown = 2; //比1 更加稳定点
 	// Prepare matrix
-	glbCanvas = CreateMatrixFromOptions(panelOptions, runtime_opt);
+	glbCanvas = RGBMatrix::CreateFromOptions(panelOptions, runtime_opt);
 	if (glbCanvas == NULL)
 		return 1;
 
-	offscreen_canvas = glbCanvas->CreateFrameCanvas();
+	glbOffscreen_canvas = glbCanvas->CreateFrameCanvas();
 	printf("Panel size: %dx%d. Hardware gpio mapping: %s\n", glbCanvas->width(), glbCanvas->height(), panelOptions.hardware_mapping);
 
 	return 0;
@@ -749,35 +541,63 @@ int initPanel(int argc, char *argv[]){
 
 
 
-void start_engine_from_queue(struct chooQ* pQ ){
+void play_msg_tween_from_queue(struct chooQ* pQ ){
 	//从q中取msg
-	msg_t *msg_item;
-	if(DEQUEUE_RESULT_SUCCESS == chooQ_dequeue_ptr(pQ, &msg_item))
-		Tween_StartTween(msg_item->tween, GetTimeInMillis());	//并运行第一个msg的tween
+	int msg_remain = chooQ_length(pQ);
+	if(msg_remain > 0){
+		msg_t *msg_item = NULL;
+		printf("__debug__: <--- Queue[%d]. Get one.\n", msg_remain);
+		chooQ_dequeue_ptr(pQ, &msg_item);
+		//printf("__debug__: Qi:%d, Qo:%d. pMSG:[0x%08x], MSG.txt:%s. MSG.tween:0x%08x\n", pQ->write_idx, pQ->read_idx, (unsigned int)msg_item, msg_item->txt, (unsigned int)msg_item->tween);
 
+		Tween_StartTween(msg_item->tween, GetTimeInMillis());	//并运行第一个msg的tween
+	}
+	else{
+		//printf("__debug__: Try get msg, but empty....\n");
+	}
 }
 
 //msg tween例行更新
 void update_msg_draw(Tween* tween) {
 	msg_t *msg_item = (msg_t*)tween->data;
-	Color color(0, 60, 0);
-	rgb_matrix::DrawText(offscreen_canvas, glbFont, (int)tween->props.x, 24, color, NULL, msg_item->txt, 0);
+
+	Color color(0, 200, 0);
+	rgb_matrix::DrawText(glbOffscreen_canvas, glbFont, (int)tween->props.x, 24, color, NULL, msg_item->txt, 0);
+
+	is_canvas_dirty = true;	//标记 有新内容了，等会把fb换掉
 }
 
 //msg tween正式开始 回调
-void start_msg_tween(Tween* tween) {
-
+void cb_tween_start(Tween* tween) {
+	//msg_t *msg_item = (msg_t*)tween->data;
+	//printf("__debug__: <<<<--------------- tween[%s] start...\n", msg_item->txt);
 }
 
-//msg tween 结束 回调
-void complete_msg_tween(Tween* tween){
+//msg tween 结束。从queue中再取msg，播放。销毁自己
+void cb_tween_complete_and_resume(Tween* tween){
+	msg_t *msg_item = (msg_t*)tween->data;
+	//printf("__debug__: --------------->>>> tween[%s] finish...\n", msg_item->txt);
 
-//if(ENGINE_IS_IDLE(glbEngine))	start_engine_from_queue(&chooQueue);
-
+	//如果没有后续tween,就从
+	//if(NULL != tween->chain){	}
+	msg_item->tween = NULL;
+	Tween_DestroyTween(tween); //销毁自己
 }
 
+//msg tween 结束。销毁自己
+void cb_tween_complete(Tween* tween){
+	msg_t *msg_item = (msg_t*)tween->data;
+	//printf("__debug__: tween[%s] finished. >>>>>\n", msg_item->txt);
 
+	//如果有后续tween,还需要将msg的tween指向新的tween
+	if(NULL != tween->chain){
+		msg_item->tween = tween->chain->tween;
+		}
 
+	//下面从queue中取msg,开启新tween
+	msg_item->tween = NULL;
+	Tween_DestroyTween(tween); //销毁自己
+}
 
 void connect_callback(struct mosquitto *mosq, void *obj, int result){
 	printf("Connect_callback(), rc=%d --------------->\n", result);
@@ -793,6 +613,67 @@ void connect_callback(struct mosquitto *mosq, void *obj, int result){
 
 }
 
+int handle_msg(const char* payload){
+
+	msg_t *msg_item;
+	if(ENQUEUE_RESULT_SUCCESS == chooQ_enqueue_alloc(&chooQueue, &msg_item)){
+
+		//拷贝 msg ，如果过长会截断
+		int chars = strncpy_utf8(payload, msg_item->txt, MSG_LENGTH_MAX);
+		if(chars == MSG_LENGTH_MAX)
+			printf("Get long msg, Trimmed to %d chars.\n", MSG_LENGTH_MAX);
+
+		//printf("Topic:%s[%d] insert: %s.\n", message->topic, chooQ_length(&chooQueue), msg_item->txt);
+
+		//根据字符串 计算输出信息的图像宽度。借助DrawText()函数，往y=-512 地方画入，不会造成实际绘制，仅仅计算图像长度
+		Color color(0, 0, 0);
+		int msg_width = rgb_matrix::DrawText(glbOffscreen_canvas, glbFont, 0, -512, color, NULL, msg_item->txt, 0);
+
+		//通过 字符串图像的长度 和 屏幕长度，来设计 tween 并挂载到 msg 对象上
+		//printf("__debug__: get msg. msg image width: %d.glbCanvas->width: %d. tween time:%d \n", msg_width, glbCanvas->width(), time);
+		//
+		int canvas_width = glbCanvas->width(), firstStop = 0;
+		float msPerPixel = 2000 / canvas_width;	//以屏幕宽度运动3s为基础，计算运动速度
+		Tween_Props props, toProps;
+		Tween *tween_enter, *tween_exit;
+		if(canvas_width > msg_width){	//如果消息能全屏容纳，那么先停留在对中位置
+			firstStop = (canvas_width - msg_width)/2;
+			props = Tween_MakeProps(canvas_width, 0, 0, 0, 0);	//从屏幕右边缘;
+			toProps = Tween_MakeProps(firstStop, 0, 0, 0, 0);	//到对中
+			tween_enter = Tween_CreateTween(glbEngine, &props, &toProps, (int)((canvas_width - firstStop)*msPerPixel), TWEEN_EASING_BACK_OUT, update_msg_draw, msg_item);	//TWEEN_EASING_LINEAR TWEEN_EASING_BACK_IN_OUT
+
+			props = Tween_MakeProps(firstStop, 0, 0, 0, 0);;	//从对中
+			toProps = Tween_MakeProps(-msg_width, 0, 0, 0, 0);	//到消息消失
+			tween_exit = Tween_CreateTween(glbEngine, &props, &toProps, (int)((firstStop + msg_width)*msPerPixel), TWEEN_EASING_BACK_IN, update_msg_draw, msg_item);	//TWEEN_EASING_LINEAR TWEEN_EASING_BACK_IN_OUT
+			tween_exit->delay = 2000;
+		}
+		else{	//先停留在左侧边缘
+			firstStop = 0;
+			props = Tween_MakeProps(canvas_width, 0, 0, 0, 0);	//从屏幕右边缘;
+			toProps = Tween_MakeProps(firstStop, 0, 0, 0, 0);	//到左边缘
+			tween_enter = Tween_CreateTween(glbEngine, &props, &toProps, (int)(canvas_width*msPerPixel), TWEEN_EASING_CUBIC_OUT, update_msg_draw, msg_item);	//TWEEN_EASING_LINEAR TWEEN_EASING_BACK_IN_OUT
+
+			props = Tween_MakeProps(0, 0, 0, 0, 0);	//从屏幕左边缘
+			toProps = Tween_MakeProps(-msg_width, 0, 0, 0, 0);	//向左直到msg消失
+			tween_exit = Tween_CreateTween(glbEngine, &props, &toProps, (int)(msg_width*msPerPixel), TWEEN_EASING_CUBIC_IN, update_msg_draw, msg_item);	//TWEEN_EASING_LINEAR TWEEN_EASING_BACK_IN_OUT
+			tween_exit->delay = 2000;
+	}
+
+		Tween_ChainTweens(tween_enter, tween_exit); //
+		msg_item->tween = tween_enter;
+
+		msg_item->tween->startCallback = cb_tween_start;
+		msg_item->tween->completeCallback = cb_tween_complete_and_resume;
+
+		//printf("__debug__: --->Qi:%d, Qo:%d. Queue[%d], pMsg[0x%08x], Msg[%s], Tween[0x%08x] incoming. \n", chooQueue.write_idx, chooQueue.read_idx, chooQ_length(&chooQueue), (unsigned int)msg_item, msg_item->txt, (unsigned int)msg_item->tween);
+		return 0;
+	}
+	else{
+		printf("Message queue is full, drop.\n");
+		return -1;
+	}
+
+}
 
 void message_callback(struct mosquitto *mosq, void *obj, const struct mosquitto_message *message){
 	bool match = false;
@@ -810,37 +691,11 @@ void message_callback(struct mosquitto *mosq, void *obj, const struct mosquitto_
 	mosquitto_topic_matches_sub(channel, message->topic, &match);
 	if (match)
 	{
-		msg_t *msg_item;
-		if(ENQUEUE_RESULT_SUCCESS == chooQ_enqueue_alloc(&chooQueue, &msg_item)){
 
-			//拷贝 msg ，如果过长会截断
-			int chars = strncpy_utf8((char*)message->payload, msg_item->txt, MSG_LENGTH_MAX);
-			if(chars == MSG_LENGTH_MAX)
-				printf("Message exceeded %d chars.Trimmed.\n", MSG_LENGTH_MAX);
+		handle_msg((char*)message->payload);
 
-			printf("Topic:%s[%d] insert: %s.\n", message->topic, chooQ_length(&chooQueue), msg_item->txt);
 
-			//根据字符串 计算输出信息的图像宽度。借助DrawText()函数，往y=-512 地方画入，不会造成实际绘制，仅仅计算图像长度
-			Color color(0, 0, 0);
-			int width = rgb_matrix::DrawText(offscreen_canvas, glbFont, 0, -512, color, NULL, msg_item->txt, 0);
 
-			//通过 字符串图像的长度 和 屏幕长度，来设计 tween 并挂载到 msg 对象上
-			Tween_Props props = Tween_MakeProps(glbCanvas->width(), 0, 0, 0, 0);	//从屏幕右边缘
-			Tween_Props toProps = Tween_MakeProps(-width, 0, 0, 0, 0);	//到左侧完全隐没
-			int move = glbCanvas->width() + width; 
-			int time = move * glbCanvas->width() / 2000;	//以屏幕宽度运动2s为基础，计算运动时间
-			msg_item->tween = Tween_CreateTween(glbEngine, &props, &toProps, time, TWEEN_EASING_LINEAR, update_msg_draw, msg_item);	
-			msg_item->tween->startCallback = start_msg_tween;
-			msg_item->tween->completeCallback = complete_msg_tween;
-
-			if(ENGINE_IS_IDLE(glbEngine))
-				start_engine_from_queue(&chooQueue);
-
-			
-		}
-		else{
-			printf("Message queue is full, topic:%s drop.\n", message->topic);
-		}
 	}
 
 
@@ -934,21 +789,9 @@ int runMQTT(void){
 }
 
 
-void update(Tween* tween) {
-    //Square* square;
-    //square  = (Square*)tween->data;
-	char buf[128];
-	printf("\r");
-	int i;
-	for(i = 0; i < 100; i++)
-		buf[i] = i == (int)tween->props.x? '*':'-';
-	buf[i] = '\0';
-	printf("%s", buf);
-}
+
 
 int main(int argc, char *argv[]){
-
-
 
 	signal(SIGTERM, InterruptHandler);
 	signal(SIGINT, InterruptHandler);
@@ -976,56 +819,47 @@ int main(int argc, char *argv[]){
 	}
 
 	printf("Loading font...");
-	int rt = glbFont.LoadFont("msyh24.bdf");
-	if (!rt)
-	{
-		printf("Done\n");
-	}
-	else
-	{
-		fprintf(stderr, "FAIL: unable to load font: %s\n", "msyh24.bdf");
+	if (!glbFont.LoadFont("msyh24.bdf")){
+		fprintf(stderr, "FAIL: unable to load font\n");
 		exit(1);
 	}
+	printf("Done\n");
 
 
 	initPanel(argc, argv);
 	chooQ_init(&chooQueue);	//初始化队列
+	printf("Queue structure occupy %d bytes.\n", sizeof(struct chooQ));
 
 	initMQTT();
 
-
     glbEngine = Tween_CreateEngine();
    
-
-
-    Tween_Props props = Tween_MakeProps(0, 0, 0, 0, 0);
-    Tween_Props toProps = Tween_MakeProps(100, 0, 0, 0, 0);
-
-    Tween* tween = Tween_CreateTween(glbEngine, &props, &toProps, 3000, TWEEN_EASING_BOUNCE_OUT, update, NULL);
-    tween->delay = 3000;
-    //tweenBack = Tween_CreateTween(glbEngine, &toProps, &props, 3000, TWEEN_EASING_ELASTIC_IN_OUT, update, &square);
-    //Tween_ChainTweens(tween, tweenBack);
-    //Tween_ChainTweens(tweenBack, tween);
-    Tween_StartTween(tween, GetTimeInMillis());
-
-
+	//Color color(100, 0, 0);
+	//rgb_matrix::DrawText(glbOffscreen_canvas, glbFont, 10, 24, color, NULL, "IDLE ---- IDLE ----IDLE ----", 0);
 
 	while(!Interrupt)
 	{
-		for(int i = 0; i < 200; i++){
-			int vsync_multiple = 1;
-			DisplayAnimation(glbCanvas, offscreen_canvas, vsync_multiple); //1000 frames per second
-	        
-			Tween_UpdateEngine(glbEngine, GetTimeInMillis());
+		for(int i = 0; i < 10; i++){
+			glbOffscreen_canvas->Fill(0,0,0);	//先清空
+			Tween_UpdateEngine(glbEngine, GetTimeInMillis());	//在这里完成所有 tween在offscreen上的render
+	
+			if(is_canvas_dirty){	//有新内容，就换。要不不换，留下之前内容
+				//https://github.com/hzeller/rpi-rgb-led-matrix/blob/a3eea997a9254b83ab2de97ae80d83588f696387/include/led-matrix.h#L235C57-L235C76
+				glbOffscreen_canvas = glbCanvas->SwapOnVSync(glbOffscreen_canvas);
+				is_canvas_dirty = false;
+			}
 
-			SleepMillis(5);	//
+			SleepMillis(10);
 		}
 		runMQTT();	//10 times per second.
 		//spinning();
+
+		//上面mqtt_loop中可能会收到消息，tween keep on
+		if(ENGINE_IS_IDLE(glbEngine))
+			play_msg_tween_from_queue(&chooQueue);	
 	}
 
 
-    Tween_DestroyTween(tween);
     Tween_DestroyEngine(glbEngine);
 	glbEngine = NULL;
 
@@ -1045,11 +879,3 @@ int main(int argc, char *argv[]){
 
 }
 
-
-
-void DisplayAnimation(RGBMatrix *matrix, FrameCanvas *offscreen_canvas, int vsync_multiple)
-{
-
-	offscreen_canvas = matrix->SwapOnVSync(offscreen_canvas, vsync_multiple);
-
-}

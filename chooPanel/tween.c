@@ -64,7 +64,7 @@ void Tween_DestroyEngine(Tween_Engine* engine) {
 
 int Tween_UpdateEngine(Tween_Engine* engine, uint32_t time) {
     Tween_Node* node;
-    Tween_Node* tempNode = NULL;
+    Tween_Node* preNode = NULL;
 
     node = engine->tweens;
 
@@ -74,10 +74,12 @@ int Tween_UpdateEngine(Tween_Engine* engine, uint32_t time) {
     
     while (node) {
         if (!Tween_UpdateTween(node->tween, time)) {
-            if (tempNode) {
-                tempNode->next = node->next;
+            // 返回0 表示该tween已经表演完了
+            // 下面从engine的tween链中去除该node(注意不是tween,node相当于挂环)
+            if (preNode) {
+                preNode->next = node->next;
                 free(node);
-                node = tempNode->next;
+                node = preNode->next;
             }
             else {
                 engine->tweens = node->next;
@@ -86,7 +88,7 @@ int Tween_UpdateEngine(Tween_Engine* engine, uint32_t time) {
             }
         }
         else {
-            tempNode = node;
+            preNode = node;
             node = node->next;
         }
     }
@@ -144,7 +146,7 @@ Tween* Tween_CreateTweenEx(Tween_Engine* engine, Tween_Props* props, Tween_Props
 
 void Tween_ChainTweens(Tween* tween, Tween* tween2) {
     Tween_Node* node;
-    Tween_Node* tempNode;
+    Tween_Node* preNode;
 
     node = (Tween_Node*) malloc(sizeof(Tween_Node));
     memset(node, 0, sizeof(Tween_Node));
@@ -155,13 +157,13 @@ void Tween_ChainTweens(Tween* tween, Tween* tween2) {
         tween->chain = node;
     }
     else {
-        tempNode = tween->chain;
+        preNode = tween->chain;
 
-        while(tempNode->next) {
-            tempNode = tempNode->next;
+        while(preNode->next) {
+            preNode = preNode->next;
         }
 
-        tempNode->next = node;
+        preNode->next = node;
     }
 }
 
@@ -296,10 +298,10 @@ int Tween_UpdateTween(Tween* tween, uint32_t time) {
             Tween_CopyProps(&tween->repeatProps, &tween->startProps); //这里 repeatProps => startProps  有点不清楚为啥，因为 后者好像从来没变过
             tween->startTime = time + tween->delay; //更新 startTime 
             
-            return 1;   //
+            return 1;   //还未完成 返回1
         }
 
-        //如果结束了 而且不是循环tween，那么开始执行该tween本身的chain里面的其他tween
+        //如果结束了 或者循环完了，那么开始执行该tween本身的chain里面的其他tween
         else {
             node = tween->chain;
             //
@@ -307,13 +309,14 @@ int Tween_UpdateTween(Tween* tween, uint32_t time) {
                 Tween_StartTween(node->tween, time);    //该tween.chain下的所有tween都开始（挂到engine上去）。
                 node = node->next;
             }
+            //这里不清理 tween->chain 是合理的,在complete回调中还可以,根据后续做动作
 
             //执行当前tween结束回调
             if (tween->completeCallback) {
                 tween->completeCallback(tween);
             }
             
-            return 0;
+            return 0;   //tween表演完了,返回0
         }
     }
     

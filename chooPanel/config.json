@@ -6,6 +6,7 @@
 		"cols":64,
 		"chain_length":8,
 		"parallel":1,
+		"pwm_bits": 8,
 		"brightness":100,
 		"scan_mode":1,
 		"show_refresh_rate":0
