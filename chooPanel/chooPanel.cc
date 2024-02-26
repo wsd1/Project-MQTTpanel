@@ -48,10 +48,6 @@ using rgb_matrix::FrameCanvas;
 using rgb_matrix::RGBMatrix;
 
 
-
-
-
-
 // ################################################################################
 
 typedef struct
@@ -561,7 +557,7 @@ void play_msg_tween_from_queue(struct chooQ* pQ ){
 void update_msg_draw(Tween* tween) {
 	msg_t *msg_item = (msg_t*)tween->data;
 
-	Color color(0, 200, 0);
+	Color color((int)tween->props.r, (int)tween->props.g, (int)tween->props.b);
 	rgb_matrix::DrawText(glbOffscreen_canvas, glbFont, (int)tween->props.x, 24, color, NULL, msg_item->txt, 0);
 
 	is_canvas_dirty = true;	//标记 有新内容了，等会把fb换掉
@@ -639,11 +635,15 @@ int handle_msg(const char* payload){
 		if(canvas_width > msg_width){	//如果消息能全屏容纳，那么先停留在对中位置
 			firstStop = (canvas_width - msg_width)/2;
 			props = Tween_MakeProps(canvas_width, 0, 0, 0, 0);	//从屏幕右边缘;
+			props.r = 50; props.g = 250; props.b = 50; 
 			toProps = Tween_MakeProps(firstStop, 0, 0, 0, 0);	//到对中
+			toProps.r = 250; toProps.g = 50; toProps.b = 50; 
 			tween_enter = Tween_CreateTween(glbEngine, &props, &toProps, (int)((canvas_width - firstStop)*msPerPixel), TWEEN_EASING_BACK_OUT, update_msg_draw, msg_item);	//TWEEN_EASING_LINEAR TWEEN_EASING_BACK_IN_OUT
 
-			props = Tween_MakeProps(firstStop, 0, 0, 0, 0);;	//从对中
+			props = Tween_MakeProps(firstStop, 0, 0, 0, 0);	//从对中
+			props.r = 250; props.g = 50; props.b = 50; 
 			toProps = Tween_MakeProps(-msg_width, 0, 0, 0, 0);	//到消息消失
+			toProps.r = 50; toProps.g = 50; toProps.b = 250; 
 			tween_exit = Tween_CreateTween(glbEngine, &props, &toProps, (int)((firstStop + msg_width)*msPerPixel), TWEEN_EASING_BACK_IN, update_msg_draw, msg_item);	//TWEEN_EASING_LINEAR TWEEN_EASING_BACK_IN_OUT
 			tween_exit->delay = 2000;
 		}
