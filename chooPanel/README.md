@@ -3,6 +3,13 @@
 
 ---
 
+Add mosquitto Jsonc library,use:
+```
+sudo apt-get install libmosquitto-dev
+sudo apt-get install libjson-c-dev
+
+```
+
 20240222:
 这个repo借鉴了 MQTTPanel的代码。改进使用了mosquitto的client api，使其可以正确处理broker断连时的情况。
 

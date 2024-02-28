@@ -1,17 +1,15 @@
 CXXFLAGS=-Wall -O3 -g -Wextra -Wno-unused-parameter
-OBJECTS=chooPanel.o tween.o tween_easing.o
+SOURCES= chooPanel.c tween.c tween_easing.c utils.c
+OBJECTS= $(SOURCES:.c=.o)
 BINARIES=chooPanel
-
-OPTIONAL_OBJECTS=video-viewer.o
-OPTIONAL_BINARIES=video-viewer
 
 # Where our library resides. You mostly only need to change the
 # RGB_LIB_DISTRIBUTION, this is where the library is checked out.
 JSON_INCDIR=/usr/include/json-c
 JSON_LIBDIR=/usr/lib
 JSON_LIBRARY_NAME=json-c
-RGB_INCDIR=/home/dy/workshop/rpi-rgb-led-matrix/include
-RGB_LIBDIR=/home/dy/workshop/rpi-rgb-led-matrix/lib
+RGB_INCDIR=/root/workshop/rpi-rgb-led-matrix/include
+RGB_LIBDIR=/root/workshop/rpi-rgb-led-matrix/lib
 RGB_LIBRARY_NAME=rgbmatrix
 RGB_LIBRARY=$(RGB_LIBDIR)/lib$(RGB_LIBRARY_NAME).a
 
@@ -19,21 +17,12 @@ LDFLAGS+=-L$(RGB_LIBDIR) -l$(RGB_LIBRARY_NAME) -L$(JSON_LIBDIR) -l$(JSON_LIBRARY
 
 all : $(BINARIES)
 
-chooPanel: chooPanel.o tween.o tween_easing.o $(RGB_LIBRARY)
+chooPanel: $(OBJECTS) $(RGB_LIBRARY)
 	$(CXX) $(CXXFLAGS) $(OBJECTS) -o $@ $(LDFLAGS)
 
 
-%.o : %.cc
+%.o : %.c
 	$(CXX) -I$(RGB_INCDIR) -I$(JSON_INCDIR) $(CXXFLAGS) -c -o $@ $<
-
-chooPanel.o : chooPanel.cc
-	$(CXX) -I$(RGB_INCDIR) -I$(JSON_INCDIR) $(CXXFLAGS) -c -o $@ $<
-
-tween.o : tween.c
-	$(CXX) $(CXXFLAGS) -c -o $@ $<
-
-tween_easing.o : tween_easing.c
-	$(CXX) $(CXXFLAGS) -c -o $@ $<
 
 clean:
 	rm -f $(OBJECTS) $(BINARIES) $(OPTIONAL_OBJECTS) $(OPTIONAL_BINARIES)
