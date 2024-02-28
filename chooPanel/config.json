@@ -9,13 +9,14 @@
 		"pwm_bits": 6,
 		"brightness":50,
 		"scan_mode":0,
+		"row_address_type":0,
 		"show_refresh_rate":0,
-		"limit_refresh_rate_hz":60
+		"limit_refresh_rate_hz":0
 	},
 	"mqtt":{
 		"clientid": "chooPanel",
 		"host": "127.0.0.1",
 		"port": "1883",
-		"root": "/chooPanel"
+		"root": "chooPanel"
 	}
 }

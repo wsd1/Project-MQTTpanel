@@ -41,7 +41,7 @@ extern "C"
 #define MSG_LENGTH_MAX 128
 
 int sflags = 0;
-#define json_object_to_json_string(obj) json_object_to_json_string_ext(obj,sflags)
+#define json_object_to_json_string(obj) json_object_to_json_string_ext(obj, sflags)
 
 
 //using rgb_matrix::Canvas;
@@ -60,7 +60,6 @@ typedef struct
 	uint16_t port;
 } mqttCfg_t;
 
-typedef int64_t tmillis_t;
 
 
 
@@ -96,105 +95,6 @@ volatile bool Interrupt = false;
 
 tmillis_t glbLastConnection = 0;
 bool glbIsOnline = false;
-
-// ################################################################################
-
-/*
-static void spinning(){
-	char spin[5] = "\\|/-";
-	static int spin_idx = 0;
-	printf("\r%c", spin[spin_idx++]);
-	fflush(stdout);
-	spin_idx = spin_idx % 4;
-}
-*/
-
-static tmillis_t GetTimeInMillis(){
-	struct timeval tp;
-	gettimeofday(&tp, NULL);
-	return tp.tv_sec * 1000 + tp.tv_usec / 1000;
-}
-
-static void SleepMillis(tmillis_t milli_seconds){
-	if (milli_seconds <= 0) return;
-	struct timespec ts;
-	ts.tv_sec = milli_seconds / 1000;
-	ts.tv_nsec = (milli_seconds % 1000) * 1000000;
-	nanosleep(&ts, NULL);
-}
-
-//参考之：https://github.com/wsd1/rpi-rgb-led-matrix/blob/master/lib/utf8-internal.h
-int utf8_bytes(const char* it) {
-  uint8_t cp = *it;
-  if( 0 == cp)
-	return 0;
-  else if (cp < 0x80)
-    return 1;
-  else if ((cp & 0xE0) == 0xC0)
-    return 2;
-  else if ((cp & 0xF0) == 0xE0)
-    return 3;
-  else if ((cp & 0xF8) == 0xF0)
-    return 4;
-  else if ((cp & 0xFC) == 0xF8)
-    return 5;
-  else if ((cp & 0xFE) == 0xFC)
-    return 6;
-  else
-	return -1;
-}
-
-//拷贝utf8字符串，参数n表示最多字符个数，且如果源超出字数，会截断保证输出字数，且目标尾部会加'\0'
-int strncpy_utf8(const char* str, char* dst, int n){
-	if (!str || n <= 0) return 0;
-	int i = utf8_bytes(str), bytes = 0, chars = 0;
-
-	//循环取字符，直到结尾 或者 字符数超限
-	while(i > 0 && chars < n){
-		bytes += i; chars++;
-		i = utf8_bytes(str + bytes);
-	}
-
-	//拷贝到目标 并处理结尾
-	if(bytes > 0){
-		memcpy(dst, str, bytes);
-		dst[bytes] = '\0';
-	}
-
-	//返回 字符数量
-	return chars;
-}
-
-int strlen_utf8(const char* str){
-	if (!str) return 0;
-	int len = (int)strlen(str), ret = 0;
-
-	for (const char* sptr = str; (sptr - str) < len && *sptr;)	{
-		unsigned char ch = (unsigned char)(*sptr);
-		if (ch < 0x80)		{
-			sptr++;	// ascii
-			ret++;
-		}
-		else if (ch < 0xc0)		{
-			sptr++;	// invalid char
-		}
-		else if (ch < 0xe0)		{
-			sptr += 2;
-			ret++;
-		}
-		else if (ch < 0xf0)		{
-			sptr += 3;
-			ret++;
-		}
-		else		{
-			// 统一4个字节
-			sptr += 4;
-			ret++;
-		}
-	}
-	return ret;
-}
-
 
 // ################################################################################
 
@@ -358,6 +258,8 @@ void setPanelConfig(json_object *rootObject, RGBMatrix::Options *pMatrixOption, 
 		ptrKey = &pMatrixOption->pwm_lsb_nanoseconds;
 	else if (strcmp(Key, "row_address_type") == 0)
 		ptrKey = &pMatrixOption->row_address_type;
+	else if (strcmp(Key, "limit_refresh_rate_hz") == 0)
+		ptrKey = &pMatrixOption->limit_refresh_rate_hz;
 	else
 		return;
 
@@ -403,6 +305,10 @@ void setPanelConfig(json_object *rootObject, RGBMatrix::Options *pMatrixOption, 
 		setPanelConfig(rootObject, pMatrixOption, Key, (int)0, true);
 	else if (strcmp(Key, "row_address_type") == 0)
 		setPanelConfig(rootObject, pMatrixOption, Key, (int)0, true);
+	else if (strcmp(Key, "limit_refresh_rate_hz") == 0)
+		setPanelConfig(rootObject, pMatrixOption, Key, (int)0, true);
+
+
 
 }
 
@@ -425,6 +331,9 @@ int init_panel_from_json(json_object *rootObject, RGBMatrix::Options *pMatrixOpt
 	setPanelConfig(rootObject, pMatrixOption, (char *) "row_address_type");
 	setPanelConfig(rootObject, pMatrixOption, (char *) "show_refresh_rate");
 	setPanelConfig(rootObject, pMatrixOption, (char *) "inverse_colors");
+	setPanelConfig(rootObject, pMatrixOption, (char *) "limit_refresh_rate_hz");
+	
+
 	return 0;
 }
 
@@ -516,18 +425,6 @@ void cb_tween_complete_and_destroy(Tween* tween){
 }
 
 
-void connect_callback(struct mosquitto *mosq, void *obj, int result){
-	printf("Broker connect_callback(), rc=%d\n", result);
-	setTimeoutConnected();	//set online and reset timeout
-
-	char channel[128];
-	sprintf(channel, "%s/#", mqtt_options.root);
-	//printf("mosquitto_subscribing...\n");
-	int rt = mosquitto_subscribe(mosq, NULL, channel, 0);
-	printf("mosquitto_subscribe[\"%s\"] return %d.\n", channel, rt);
-
-}
-
 int handle_msg(const char* payload){
 
 	msg_t *msg_item;
@@ -572,7 +469,8 @@ int handle_msg(const char* payload){
 			//停留
 			Tween_CopyProps(&toProps, &props);
 			toProps.r += -180; toProps.g += 180; toProps.b += 0; 
-			ptween = Tween_CreateTween(glbEngine, &props, &toProps, 1500, TWEEN_EASING_LINEAR, update_msg_draw, msg_item);
+			ptween = Tween_CreateTween(glbEngine, &props, &toProps, 150, TWEEN_EASING_LINEAR, update_msg_draw, msg_item);
+			ptween->repeat = 11; ptween->yoyo = true; 
 			//处理新构造tween，加装回调，并链接
 			ptween->startCallback = cb_tween_start;
 			ptween->completeCallback = cb_tween_complete_and_destroy;
@@ -701,15 +599,24 @@ void message_callback(struct mosquitto *mosq, void *obj, const struct mosquitto_
 	//匹配msg类型
 	mosquitto_topic_matches_sub(channel, message->topic, &match);
 	if (match)
-	{
-
 		handle_msg((char*)message->payload);
 
+}
 
+void connect_callback(struct mosquitto *mosq, void *obj, int result){
+	printf("Broker connect_callback(), rc=%d\n", result);
+	setTimeoutConnected();	//set online and reset timeout
 
-	}
+	char channel[128];
+	sprintf(channel, "%s/#", mqtt_options.root);
+	//printf("mosquitto_subscribing...\n");
+	int rt = mosquitto_subscribe(mosq, NULL, channel, 0);
+	printf("mosquitto_subscribe[\"%s\"] return %d.\n", channel, rt);
 
-
+	char buf[256], ip[16]; 
+	get_local_ip("eth0", ip);
+	sprintf(buf, "MQTT broker: %s:%d.Send message to topic '%s/msg'", ip, mqtt_options.port, mqtt_options.root);
+	handle_msg(buf);
 }
 
 int initMQTT(void){
@@ -842,7 +749,7 @@ int main(int argc, char *argv[]){
 	if (canvas == NULL)
 		return 1;
 
-	/*
+	/**/
 	printf("matrix options: ---------------------\r\n");
 	printf("hardware_mapping:%s\n", matrix_options.hardware_mapping);
 	printf("rows:%d\n", matrix_options.rows);
@@ -872,13 +779,14 @@ int main(int argc, char *argv[]){
 	printf("drop_priv_user:%s\n", runtime_opt.drop_priv_user);
 	printf("drop_priv_group:%s\n", runtime_opt.drop_priv_group);
 	printf("--------------------------------------\r\n");
-	*/
+	
 
 	glbOffscreen_canvas = canvas->CreateFrameCanvas();
 	printf("Panel size: %dx%d. Hardware gpio mapping: %s\n", canvas->width(), canvas->height(), matrix_options.hardware_mapping);
 
 	chooQ_init(&chooQueue);	//初始化队列
-	printf("Queue structure occupy %ld bytes.\n", sizeof(struct chooQ));
+	//printf("sizeof(msg_t)=%ld, sizeof(tween)=%ld\n",sizeof(msg_t), sizeof(Tween));
+	//printf("Queue structure occupy %ld bytes.\n", sizeof(struct chooQ));
 
 	initMQTT();
     glbEngine = Tween_CreateEngine();
@@ -887,10 +795,6 @@ int main(int argc, char *argv[]){
 	rgb_matrix::DrawText(glbOffscreen_canvas, glbFont, 10, 24, color, NULL, "System initializing...", 0);
 	is_canvas_dirty = true;
 
-	char buf[48], ip[16]; 
-	get_local_ip("eth0", ip);
-	sprintf(buf, "本机IP地址：%s", ip);
-	handle_msg(buf);
 
 	while(!Interrupt)
 	{
