@@ -99,8 +99,12 @@ enum dequeue_result NAME ##_dequeue_ptr(struct NAME * p_queue, ITEM_TYPE ** p_it
 bool NAME ##_is_empty(struct NAME * p_queue) {                                          \
   return ((p_queue->write_idx - p_queue->read_idx) == 0);                               \
 }                                                                                       \
-int NAME ##_length(struct NAME * p_queue) {                                          \
-  return (p_queue->write_idx - p_queue->read_idx);                               \
+int NAME ##_space(struct NAME * p_queue) {                                              \
+  size_t const capacity = ARRAY_LENGTH(p_queue->items);                                 \
+  return capacity - (p_queue->write_idx - p_queue->read_idx);                           \
+}                                                                                       \
+int NAME ##_length(struct NAME * p_queue) {                                             \
+  return (p_queue->write_idx - p_queue->read_idx);                                      \
 }
 
 

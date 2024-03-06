@@ -35,10 +35,18 @@ extern "C"
 #include "utils.h"
 
 
-#define mqtt_host "192.168.31.79"
-#define mqtt_port 1883
 #define RECONNECT_TIMEOUT 10000
 #define MSG_LENGTH_MAX 128
+#define MSG_QUEUE_MAX 16
+//消息附加内容长度（类如，剩余数量，时间，或其他）
+#define MSG_TIP_CHAR_NUM_MAX 32	
+
+#define GPIO_RELAY_BIT (1<<15)
+
+#define PANEL_POWERSAVE_TIMEOUT 300000
+
+#define MSG_RUN_ACROSS_PANEL_TIME 2000
+
 
 int sflags = 0;
 #define json_object_to_json_string(obj) json_object_to_json_string_ext(obj, sflags)
@@ -60,16 +68,12 @@ typedef struct
 	uint16_t port;
 } mqttCfg_t;
 
-
-
-
-
 typedef struct {
     Tween* tween;
-	char txt[MSG_LENGTH_MAX*3];	//根据最长的msg设定buf utf8 汉字是3字节
+	char txt[MSG_LENGTH_MAX*4 + MSG_TIP_CHAR_NUM_MAX];	//根据最长的msg设定buf utf8 汉字是3字节 emoj是4字节
 }msg_t;
 
-QUEUE_DECLARATION(chooQ, msg_t, 100);	//msg_t x 100 
+QUEUE_DECLARATION(chooQ, msg_t, MSG_QUEUE_MAX);	//msg_t x MSG_QUEUE_MAX 
 QUEUE_DEFINITION(chooQ, msg_t);
 struct chooQ chooQueue;
 
@@ -86,19 +90,45 @@ struct mosquitto *mosq;
 RGBMatrix::Options matrix_options;
 rgb_matrix::RuntimeOptions runtime_opt;
 
-RGBMatrix *canvas;
+RGBMatrix *matrix;
 FrameCanvas *glbOffscreen_canvas;
 rgb_matrix::Font glbFont;
 
 mqttCfg_t mqtt_options;
 volatile bool Interrupt = false;
 
-tmillis_t glbLastConnection = 0;
-bool glbIsOnline = false;
+
+bool is_canvas_dirty = false;
+
 
 // ################################################################################
 
-bool is_canvas_dirty = false;
+
+tmillis_t glbLastPoweron = 0;
+bool isPoweron = false;
+
+void panel_check_poweoff(){
+	if(isPoweron && GetTimeInMillis() - glbLastPoweron > PANEL_POWERSAVE_TIMEOUT){
+		matrix->OutputGPIO(0);	//重复执行 不用担心，只是写mem
+		isPoweron = false;
+		printf("〖Power〗 panel off ☒ \n");
+	}
+}
+
+void panel_poweron(){
+	if(!isPoweron){
+		matrix->OutputGPIO(GPIO_RELAY_BIT);	//on
+		isPoweron = true;
+		SleepMillis(1000); //等稳定
+		printf("〖Power〗 panel on~ ☑\n");
+	}
+	glbLastPoweron = GetTimeInMillis();
+}
+
+
+// ################################################################################
+tmillis_t glbLastConnection = 0;
+bool glbIsOnline = false;
 
 static void setOffline(){
 	glbIsOnline = false;
@@ -376,21 +406,6 @@ int get_mqtt_cfg_from_json(json_object *pRootNode, mqttCfg_t *pMqttCfg){
 
 // ################################################################################
 
-void play_msg_tween_from_queue(struct chooQ* pQ ){
-	//从q中取msg
-	int msg_remain = chooQ_length(pQ);
-	if(msg_remain > 0){
-		msg_t *msg_item = NULL;
-		//printf("__debug__: <--- Queue[%d]. Get one.\n", msg_remain);
-		chooQ_dequeue_ptr(pQ, &msg_item);
-		//printf("__debug__: Qi:%d, Qo:%d. pMSG:[0x%08x], MSG.txt:%s. MSG.tween:0x%08x\n", pQ->write_idx, pQ->read_idx, (unsigned int)msg_item, msg_item->txt, (unsigned int)msg_item->tween);
-
-		Tween_StartTween(msg_item->tween, GetTimeInMillis());	//并运行第一个msg的tween
-	}
-	else{
-		//printf("__debug__: Try get msg, but empty....\n");
-	}
-}
 
 //msg tween例行更新
 void update_msg_draw(Tween* tween) {
@@ -425,26 +440,33 @@ void cb_tween_complete_and_destroy(Tween* tween){
 }
 
 
-int handle_msg(const char* payload){
+//播放msgqueue中的内容，返回q的长度，0表示当前空
+int play_msg_tween_from_queue(struct chooQ* pQ ){
+	//从q中取msg
+	int msg_remain = chooQ_length(pQ);
+	if(msg_remain > 0){
+		msg_t *msg_item = NULL;
+		msg_remain--;
+		//printf("__debug__: [ msg ]◀◀. Q:%d.\n", msg_remain);
 
-	msg_t *msg_item;
-	if(ENQUEUE_RESULT_SUCCESS == chooQ_enqueue_alloc(&chooQueue, &msg_item)){
+		chooQ_dequeue_ptr(pQ, &msg_item);
+		//printf("__debug__: Qi:%d, Qo:%d. pMSG:[0x%08x], MSG.txt:%s. MSG.tween:0x%08x\n", pQ->write_idx, pQ->read_idx, (unsigned int)msg_item, msg_item->txt, (unsigned int)msg_item->tween);
 
-		//拷贝 msg ，如果过长会截断
-		int chars = strncpy_utf8(payload, msg_item->txt, MSG_LENGTH_MAX);
-		if(chars == MSG_LENGTH_MAX)
-			printf("Get long msg, Trimmed to %d chars.\n", MSG_LENGTH_MAX);
-
-		//printf("Topic:%s[%d] insert: %s.\n", message->topic, chooQ_length(&chooQueue), msg_item->txt);
+		if(msg_remain > 0){
+			//播出之前，为消息加上提示信息：剩余消息数量
+			char msg_tip[MSG_TIP_CHAR_NUM_MAX];
+			snprintf(msg_tip, sizeof(msg_tip), "[%d]", msg_remain);
+			strcat(msg_item->txt, msg_tip);
+		}
 
 		//根据字符串 计算输出信息的图像宽度。借助DrawText()函数，往y=-512 地方画入，不会造成实际绘制，仅仅计算图像长度
 		Color color(0, 0, 0);
 		int msg_width = rgb_matrix::DrawText(glbOffscreen_canvas, glbFont, 0, -512, color, NULL, msg_item->txt, 0);
 
 		//通过 字符串图像的长度 和 屏幕长度，来设计 tween 并挂载到 msg 对象上
-		//printf("__debug__: get msg. msg image width: %d.canvas->width: %d. tween time:%d \n", msg_width, canvas->width(), time);
-		int canvas_width = canvas->width(), firstStop = 0;
-		float msPerPixel = 3000 / canvas_width;	//以屏幕宽度运动3s为基础，计算运动速度 (重要，这里计算出标准速度，后面全部的动画时间计算都是以此作为标准的)
+		//printf("__debug__: get msg. msg image width: %d.matrix->width: %d. tween time:%d \n", msg_width, matrix->width(), time);
+		int canvas_width = matrix->width(), firstStop = 0;
+		float msPerPixel = MSG_RUN_ACROSS_PANEL_TIME / canvas_width;	//以屏幕宽度运动3s为基础，计算运动速度 (重要，这里计算出标准速度，后面全部的动画时间计算都是以此作为标准的)
 		Tween_Props props, toProps;
 		Tween *ptween_head = NULL, *ptween_pre = NULL, *ptween = NULL;
 
@@ -479,7 +501,7 @@ int handle_msg(const char* payload){
 
 			//移出
 			Tween_CopyProps(&toProps, &props);
-			toProps.x = -msg_width;	//到消息消失
+			toProps.x = -msg_width-4;	//到消息消失 移出屏幕4pixels
 			toProps.r += 0; toProps.g += -180; toProps.b += 180; 
 			ptween = Tween_CreateTween(glbEngine, &props, &toProps, (int)((firstStop + msg_width)*msPerPixel), TWEEN_EASING_BACK_IN, update_msg_draw, msg_item);	//TWEEN_EASING_LINEAR TWEEN_EASING_BACK_IN_OUT
 			//处理新构造tween，加装回调，并链接
@@ -517,7 +539,7 @@ int handle_msg(const char* payload){
 
 			//然后加速离开
 			Tween_CopyProps(&toProps, &props);
-			toProps.x = -msg_width;	//向左加速离开 msg消失
+			toProps.x = -msg_width-4;	//到消息消失 移出屏幕4pixels
 			toProps.r += 180; toProps.g += 0; toProps.b += -180; 
 			ptween = Tween_CreateTween(glbEngine, &props, &toProps, (int)(msg_width*msPerPixel), TWEEN_EASING_CUBIC_IN, update_msg_draw, msg_item);	//TWEEN_EASING_LINEAR TWEEN_EASING_BACK_IN_OUT
 			//处理新构造tween，加装回调，并链接
@@ -558,7 +580,7 @@ int handle_msg(const char* payload){
 
 			//然后匀速离开
 			Tween_CopyProps(&toProps, &props);
-			toProps.x = -msg_width;	//向左离开 直到msg消失
+			toProps.x = -msg_width-4;	//到消息消失 移出屏幕4pixels
 			toProps.r += 180; toProps.g += 0; toProps.b += -180; 
 			ptween = Tween_CreateTween(glbEngine, &props, &toProps, (int)((msg_width-move)*msPerPixel), TWEEN_EASING_LINEAR, update_msg_draw, msg_item);	// TWEEN_EASING_BACK_IN_OUT
 			//处理新构造tween，加装回调，并链接
@@ -572,13 +594,36 @@ int handle_msg(const char* payload){
 		//msg结构 挂上tween头
 		msg_item->tween = ptween_head;
 
-		
+		Tween_StartTween(msg_item->tween, GetTimeInMillis());	//并运行第一个msg的tween
+		return msg_remain;
+	}
+	else{
+		//printf("__debug__: Try get msg, but empty....\n");
+		return 0;
+	}
+}
 
-		//printf("__debug__: --->Qi:%d, Qo:%d. Queue[%d], pMsg[0x%08x], Msg[%s], Tween[0x%08x] incoming. \n", chooQueue.write_idx, chooQueue.read_idx, chooQ_length(&chooQueue), (unsigned int)msg_item, msg_item->txt, (unsigned int)msg_item->tween);
+int msg_enqueue(struct chooQ* pQ, const char* payload){
+
+	msg_t *msg_item;
+	
+	//不能操作最后一个空位！！！不确定其是否正在被使用中。至少需要两个以上的空间。
+	//CAN NOT CERTAIN LAST ITEM CAN BE USED. MAY BE LAST ITEM IS BEING USED. WE CAN ENQUEUE WHEN AT LEAST 2 SLOTS.
+	if(chooQ_space(pQ) > 1 && ENQUEUE_RESULT_SUCCESS == chooQ_enqueue_alloc(pQ, &msg_item)){
+
+		//拷贝 msg ，如果过长会截断
+		int chars = strncpy_utf8(msg_item->txt, payload, MSG_LENGTH_MAX);
+		if(chars == MSG_LENGTH_MAX)
+			printf("〖Queue〗Get long msg, Trimmed to %d chars.\n", MSG_LENGTH_MAX);
+
+		//printf("Topic:%s[%d] insert: %s.\n", message->topic, chooQ_length(pQ), msg_item->txt);
+		//printf("__debug__: [     ]◀◀msg in. Q:%d.\n", chooQ_length(pQ));
+
+		//printf("__debug__: --->Qi:%d, Qo:%d. Queue[%d], pMsg[0x%08x], Msg[%s], Tween[0x%08x] incoming. \n", chooQueue.write_idx, chooQueue.read_idx, chooQ_length(pQ), (unsigned int)msg_item, msg_item->txt, (unsigned int)msg_item->tween);
 		return 0;
 	}
 	else{
-		printf("Message queue is full, drop.\n");
+		printf("〖Queue〗full, drop.\n");
 		return -1;
 	}
 
@@ -593,30 +638,48 @@ void message_callback(struct mosquitto *mosq, void *obj, const struct mosquitto_
 
 	//printf("got message '%.*s' for topic '%s'\n", message->payloadlen, (char*) message->payload, message->topic);
 
-	char channel[128];
-	sprintf(channel, "%s/msg", mqtt_options.root);
+	char channel[100];
 
 	//匹配msg类型
+	snprintf(channel, sizeof(channel), "%s/msg", mqtt_options.root);
 	mosquitto_topic_matches_sub(channel, message->topic, &match);
 	if (match)
-		handle_msg((char*)message->payload);
+		msg_enqueue(&chooQueue, (char*)message->payload);
+
+	/*
+	//匹配power类型
+	snprintf(channel, sizeof(channel), "%s/power", mqtt_options.root);
+	mosquitto_topic_matches_sub(channel, message->topic, &match);
+	if (match){
+		if(0 == strcmp("on", (char*)message->payload)){
+			printf("channel: %s: on <---\n", channel);
+			matrix->OutputGPIO(GPIO_RELAY_BIT);	//on
+		}else if(0 == strcmp("off", (char*)message->payload)){
+			printf("channel: %s: off <---\n", channel);
+			matrix->OutputGPIO(0);	//off
+		}
+	}
+	*/
+
+
+  
 
 }
 
 void connect_callback(struct mosquitto *mosq, void *obj, int result){
-	printf("Broker connect_callback(), rc=%d\n", result);
+	printf("〖MQTT〗 Broker connect_callback(), rc=%d\n", result);
 	setTimeoutConnected();	//set online and reset timeout
 
 	char channel[128];
 	sprintf(channel, "%s/#", mqtt_options.root);
 	//printf("mosquitto_subscribing...\n");
 	int rt = mosquitto_subscribe(mosq, NULL, channel, 0);
-	printf("mosquitto_subscribe[\"%s\"] return %d.\n", channel, rt);
+	printf("〖MQTT〗 mosquitto_subscribe[\"%s\"] return %d.\n", channel, rt);
 
 	char buf[256], ip[16]; 
 	get_local_ip("eth0", ip);
-	sprintf(buf, "MQTT broker: %s:%d.Send message to topic '%s/msg'", ip, mqtt_options.port, mqtt_options.root);
-	handle_msg(buf);
+	sprintf(buf, "Broker: %s:%d.Send msg to topic'%s/msg'", ip, mqtt_options.port, mqtt_options.root);
+	msg_enqueue(&chooQueue, buf);
 }
 
 int initMQTT(void){
@@ -631,7 +694,7 @@ int initMQTT(void){
 	if(mosq){
 		mosquitto_connect_callback_set(mosq, connect_callback);
 		mosquitto_message_callback_set(mosq, message_callback);
-		printf("mosquitto_connecting...\n");
+		printf("〖MQTT〗 mosquitto_connecting...\n");
 		setTimeoutConnecting();	//set reset timeout
 		rc = mosquitto_connect(mosq, mqtt_options.host, mqtt_options.port, 60);
 		//printf("mosquitto_connect issued...cost %dms\n", (int)(GetTimeInMillis()-old));
@@ -686,10 +749,10 @@ int runMQTT(void){
 
 			//不在线 并且 等候时间足够
 			if( !isOnline() && isTimeoutForConnect()){
-				printf("reconnecting...\n");
+				printf("〖MQTT〗reconnecting...\n");
 				setTimeoutConnecting();	//set reset timeout
 				int rt = mosquitto_reconnect_async(mosq);
-				printf("reconnection issued...ret:%d\n", rt);
+				printf("〖MQTT〗reconnection issued...ret:%d\n", rt);
 			}
 		}
 	}
@@ -713,7 +776,7 @@ int main(int argc, char *argv[]){
 	}
 	close(fileJSON);
 
-	printf("Reading JSON config file '%s'...", filename);
+	printf("〖Config〗Reading JSON file '%s'...", filename);
 	ConfigJSON = json_object_from_file(filename);
 	if (ConfigJSON != NULL){
 		printf("Done\n");
@@ -730,12 +793,12 @@ int main(int argc, char *argv[]){
 	//################
 	//加载 font
 	//################
-	printf("Loading font...");
+	printf("〖FONT〗Loading font...");
 	if (!glbFont.LoadFont("msyh24.bdf")){
 		fprintf(stderr, "FAIL: unable to load font\n");
 		exit(1);
 	}
-	printf("Done\n");
+	printf("Done.Baseline:%d, Height:%d.\n", glbFont.baseline(), glbFont.height());
 
 
 	// printf("JSON(date):%s\n", json_object_get_string(panelObject));
@@ -745,44 +808,43 @@ int main(int argc, char *argv[]){
 	//runtime_opt.gpio_slowdown = 2; //比1 更加稳定点
 
 	// Prepare matrix
-	canvas = RGBMatrix::CreateFromOptions(matrix_options, runtime_opt);
-	if (canvas == NULL)
+	matrix = RGBMatrix::CreateFromOptions(matrix_options, runtime_opt);
+	if (matrix == NULL)
 		return 1;
 
 	/**/
-	printf("matrix options: ---------------------\r\n");
-	printf("hardware_mapping:%s\n", matrix_options.hardware_mapping);
-	printf("rows:%d\n", matrix_options.rows);
-	printf("cols:%d\n", matrix_options.cols);
-	printf("chain_length:%d\n", matrix_options.chain_length);
-	printf("parallel:%d\n", matrix_options.parallel);
-	printf("pwm_bits:%d\n", matrix_options.pwm_bits);
-	printf("pwm_lsb_nanoseconds:%d\n", matrix_options.pwm_lsb_nanoseconds);
-	printf("pwm_dither_bits:%d\n", matrix_options.pwm_dither_bits);
-	printf("brightness:%d\n", matrix_options.brightness);
-	printf("scan_mode:%d\n", matrix_options.scan_mode);
-	printf("row_address_type:%d\n", matrix_options.row_address_type);
-	printf("multiplexing:%d\n", matrix_options.multiplexing);
-	printf("disable_hardware_pulsing:%s\n", matrix_options.disable_hardware_pulsing? "true" : "false");
-	printf("show_refresh_rate:%s\n", matrix_options.show_refresh_rate? "true" : "false");
-	printf("inverse_colors:%s\n", matrix_options.inverse_colors? "true" : "false");
-	printf("led_rgb_sequence:%s\n", matrix_options.led_rgb_sequence);
-	printf("pixel_mapper_config:%s\n", matrix_options.pixel_mapper_config);
-	printf("panel_type:%s\n", matrix_options.panel_type);
-	printf("limit_refresh_rate_hz:%d\n", matrix_options.limit_refresh_rate_hz);
-
-	printf("runtime options: ---------------------\r\n");
-	printf("gpio_slowdown:%d\n", runtime_opt.gpio_slowdown);
-	printf("daemon:%d\n", runtime_opt.daemon);
-	printf("drop_privileges:%d\n", runtime_opt.drop_privileges);
-	printf("do_gpio_init:%s\n", runtime_opt.do_gpio_init? "true" : "false");
-	printf("drop_priv_user:%s\n", runtime_opt.drop_priv_user);
-	printf("drop_priv_group:%s\n", runtime_opt.drop_priv_group);
-	printf("--------------------------------------\r\n");
+	printf("---------- matrix options ----------\r\n");
+	printf("hardware_mapping:         %s\n", matrix_options.hardware_mapping);
+	printf("rows:                     %d\n", matrix_options.rows);
+	printf("cols:                     %d\n", matrix_options.cols);
+	printf("chain_length:             %d\n", matrix_options.chain_length);
+	printf("parallel:                 %d\n", matrix_options.parallel);
+	printf("pwm_bits:                 %d\n", matrix_options.pwm_bits);
+	printf("pwm_lsb_nanoseconds:      %d\n", matrix_options.pwm_lsb_nanoseconds);
+	printf("pwm_dither_bits:          %d\n", matrix_options.pwm_dither_bits);
+	printf("brightness:               %d\n", matrix_options.brightness);
+	printf("scan_mode:                %d\n", matrix_options.scan_mode);
+	printf("row_address_type:         %d\n", matrix_options.row_address_type);
+	printf("multiplexing:             %d\n", matrix_options.multiplexing);
+	printf("disable_hardware_pulsing: %s\n", matrix_options.disable_hardware_pulsing? "true" : "false");
+	printf("show_refresh_rate:        %s\n", matrix_options.show_refresh_rate? "true" : "false");
+	printf("inverse_colors:           %s\n", matrix_options.inverse_colors? "true" : "false");
+	printf("led_rgb_sequence:         %s\n", matrix_options.led_rgb_sequence);
+	printf("pixel_mapper_config:      %s\n", matrix_options.pixel_mapper_config);
+	printf("panel_type:               %s\n", matrix_options.panel_type);
+	printf("limit_refresh_rate_hz:    %d\n", matrix_options.limit_refresh_rate_hz);
+	printf("---------- runtime options----------\r\n");
+	printf("gpio_slowdown:            %d\n", runtime_opt.gpio_slowdown);
+	printf("daemon:                   %d\n", runtime_opt.daemon);
+	printf("drop_privileges:          %d\n", runtime_opt.drop_privileges);
+	printf("do_gpio_init:             %s\n", runtime_opt.do_gpio_init? "true" : "false");
+	printf("drop_priv_user:           %s\n", runtime_opt.drop_priv_user);
+	printf("drop_priv_group:          %s\n", runtime_opt.drop_priv_group);
+	printf("------------------------------------\r\n");
 	
 
-	glbOffscreen_canvas = canvas->CreateFrameCanvas();
-	printf("Panel size: %dx%d. Hardware gpio mapping: %s\n", canvas->width(), canvas->height(), matrix_options.hardware_mapping);
+	glbOffscreen_canvas = matrix->CreateFrameCanvas();
+	printf("〖Matrix〗Panel size: %dx%d. Hardware gpio mapping: %s\n", matrix->width(), matrix->height(), matrix_options.hardware_mapping);
 
 	chooQ_init(&chooQueue);	//初始化队列
 	//printf("sizeof(msg_t)=%ld, sizeof(tween)=%ld\n",sizeof(msg_t), sizeof(Tween));
@@ -791,21 +853,30 @@ int main(int argc, char *argv[]){
 	initMQTT();
     glbEngine = Tween_CreateEngine();
    
+
+	//下面请求使用GPIO15，并打开继电器
+	uint64_t available_inputs = matrix->RequestOutputs(GPIO_RELAY_BIT);	//GPIO15 addr E
+	printf("〖Matrix〗RequestOutputs() return: 0x%08lx\n", available_inputs);
+	panel_poweron();
+
 	Color color(100, 0, 100);
 	rgb_matrix::DrawText(glbOffscreen_canvas, glbFont, 10, 24, color, NULL, "System initializing...", 0);
 	is_canvas_dirty = true;
 
 
-	while(!Interrupt)
+	while(!Interrupt)	//周期100ms
 	{
 		for(int i = 0; i < 20; i++){
+
 			Tween_UpdateEngine(glbEngine, GetTimeInMillis());	//在这里完成所有 tween在offscreen上的render
-	
 			if(is_canvas_dirty){	//有新内容，就换。要不不换，留下之前内容
+				panel_poweron();//打开继电器（如果之前关闭，打开后会有等待）
+
 				//https://github.com/hzeller/rpi-rgb-led-matrix/blob/a3eea997a9254b83ab2de97ae80d83588f696387/include/led-matrix.h#L235C57-L235C76
-				glbOffscreen_canvas = canvas->SwapOnVSync(glbOffscreen_canvas);
+				glbOffscreen_canvas = matrix->SwapOnVSync(glbOffscreen_canvas);
 				glbOffscreen_canvas->Fill(0,0,0);	//清空
 				is_canvas_dirty = false;
+
 			}
 
 			SleepMillis(5);
@@ -814,8 +885,10 @@ int main(int argc, char *argv[]){
 		//spinning();
 
 		//上面mqtt_loop中可能会收到消息，tween keep on
-		if(ENGINE_IS_IDLE(glbEngine))
-			play_msg_tween_from_queue(&chooQueue);	
+		if(ENGINE_IS_IDLE(glbEngine) && 0 == play_msg_tween_from_queue(&chooQueue)){
+			//如果没有播放，且没有msg，那么检查到时间关闭panel
+			panel_check_poweoff();
+		}
 	}
 
 
@@ -824,15 +897,14 @@ int main(int argc, char *argv[]){
 
 	mosquitto_lib_cleanup();
 
-	// Animation finished. Shut down the RGB canvas.
-	canvas->Clear();
-	delete canvas;
+	matrix->Clear();
+	delete matrix;
 
 	if (Interrupt)
 	{
 		fprintf(stderr, "Caught signal. Exiting.\n");
 	}
-	printf("\nEnded.\n\n");
+	printf("\nBYE BYE, WORLD.\n\n");
 
 	return 0;
 

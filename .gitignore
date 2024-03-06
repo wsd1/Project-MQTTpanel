@@ -4,6 +4,7 @@ files/root/
 files/usr/local/share/rgbmatrix/fonts/
 .*.swp
 *.o
+*.bdf
 MQTTpanel/MQTTpanel
 chooPanel/chooPanel
 

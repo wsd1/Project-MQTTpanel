@@ -171,7 +171,7 @@ int utf8_bytes(const char* it) {
 }
 
 //拷贝utf8字符串，参数n表示最多字符个数，且如果源超出字数，会截断保证输出字数，且目标尾部会加'\0'
-int strncpy_utf8(const char* str, char* dst, int n){
+int strncpy_utf8(char* dst, const char* str, int n){
 	if (!str || n <= 0) return 0;
 	int i = utf8_bytes(str), bytes = 0, chars = 0;
 

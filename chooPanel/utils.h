@@ -14,7 +14,7 @@ tmillis_t GetTimeInMillis();
 void SleepMillis(tmillis_t milli_seconds);
 
 int utf8_bytes(const char* it);
-int strncpy_utf8(const char* str, char* dst, int n);
+int strncpy_utf8(char* dst, const char* str, int n);
 int strlen_utf8(const char* str);
 
 
